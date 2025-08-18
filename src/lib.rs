@@ -120,6 +120,12 @@ struct WsMethodDetails {
     call: proc_macro2::TokenStream,
 }
 
+/// WebSocket client method details for code generation
+struct WsClientMethodDetails {
+    identifier: proc_macro2::TokenStream,
+    call: proc_macro2::TokenStream,
+}
+
 //------------------------------------------------------------------------------
 // Parse Implementation
 //------------------------------------------------------------------------------
@@ -334,6 +340,7 @@ fn clean_impl_block(impl_block: &ItemImpl) -> ItemImpl {
                     && !attr.path().is_ident("local")
                     && !attr.path().is_ident("remote")
                     && !attr.path().is_ident("ws")
+                    && !attr.path().is_ident("ws_client")
             });
         }
     }
@@ -518,6 +525,61 @@ fn validate_websocket_method(method: &syn::ImplItemFn) -> syn::Result<()> {
     Ok(())
 }
 
+/// Validate the websocket client method signature
+fn validate_websocket_client_method(method: &syn::ImplItemFn) -> syn::Result<()> {
+    // Ensure first param is &mut self
+    if !has_valid_self_receiver(method) {
+        return Err(syn::Error::new_spanned(
+            &method.sig,
+            "WebSocket client method must take &mut self as first parameter",
+        ));
+    }
+
+    // Ensure there are exactly 3 parameters (including &mut self)
+    if method.sig.inputs.len() != 3 {
+        return Err(syn::Error::new_spanned(
+            &method.sig,
+            "WebSocket client method must take exactly 2 additional parameters: channel_id and request",
+        ));
+    }
+
+    // Get parameters (excluding &mut self)
+    let params: Vec<_> = method.sig.inputs.iter().skip(1).collect();
+
+    // Check parameter types
+    let channel_id_param = &params[0];
+    let request_param = &params[1];
+
+    if let syn::FnArg::Typed(pat_type) = channel_id_param {
+        if !pat_type.ty.to_token_stream().to_string().contains("u32") {
+            return Err(syn::Error::new_spanned(
+                pat_type,
+                "First parameter of WebSocket client method must be channel_id: u32",
+            ));
+        }
+    }
+
+    if let syn::FnArg::Typed(pat_type) = request_param {
+        let type_str = pat_type.ty.to_token_stream().to_string();
+        if !type_str.contains("HttpClientRequest") {
+            return Err(syn::Error::new_spanned(
+                pat_type,
+                "Second parameter of WebSocket client method must be request: HttpClientRequest",
+            ));
+        }
+    }
+
+    // Validate return type (must be unit)
+    if !matches!(method.sig.output, ReturnType::Default) {
+        return Err(syn::Error::new_spanned(
+            &method.sig.output,
+            "WebSocket client method must not return a value",
+        ));
+    }
+
+    Ok(())
+}
+
 /// Validate a request-response function signature
 fn validate_request_response_function(method: &syn::ImplItemFn) -> syn::Result<()> {
     // Ensure first param is &mut self
@@ -544,11 +606,13 @@ fn analyze_methods(
 ) -> syn::Result<(
     Option<syn::Ident>,    // init method
     Option<syn::Ident>,    // ws method
+    Option<syn::Ident>,    // ws_client method
     Vec<FunctionMetadata>, // metadata for request/response methods
     bool,                  // whether init method contains logging init
 )> {
     let mut init_method = None;
     let mut ws_method = None;
+    let mut ws_client_method = None;
     let mut has_init_logging = false;
     let mut function_metadata = Vec::new();
 
@@ -562,10 +626,11 @@ fn analyze_methods(
             let has_local = has_attribute(method, "local");
             let has_remote = has_attribute(method, "remote");
             let has_ws = has_attribute(method, "ws");
+            let has_ws_client = has_attribute(method, "ws_client");
 
             // Handle init method
             if has_init {
-                if has_http || has_local || has_remote || has_ws {
+                if has_http || has_local || has_remote || has_ws || has_ws_client {
                     return Err(syn::Error::new_spanned(
                         method,
                         "#[init] cannot be combined with other attributes",
@@ -588,7 +653,7 @@ fn analyze_methods(
 
             // Handle WebSocket method
             if has_ws {
-                if has_http || has_local || has_remote || has_init {
+                if has_http || has_local || has_remote || has_init || has_ws_client {
                     return Err(syn::Error::new_spanned(
                         method,
                         "#[ws] cannot be combined with other attributes",
@@ -602,6 +667,25 @@ fn analyze_methods(
                     ));
                 }
                 ws_method = Some(ident);
+                continue;
+            }
+
+            // Handle WebSocket client method
+            if has_ws_client {
+                if has_http || has_local || has_remote || has_init || has_ws {
+                    return Err(syn::Error::new_spanned(
+                        method,
+                        "#[ws_client] cannot be combined with other attributes",
+                    ));
+                }
+                validate_websocket_client_method(method)?;
+                if ws_client_method.is_some() {
+                    return Err(syn::Error::new_spanned(
+                        method,
+                        "Multiple #[ws_client] methods defined",
+                    ));
+                }
+                ws_client_method = Some(ident);
                 continue;
             }
 
@@ -660,7 +744,13 @@ fn analyze_methods(
         }
     }
 
-    Ok((init_method, ws_method, function_metadata, has_init_logging))
+    Ok((
+        init_method,
+        ws_method,
+        ws_client_method,
+        function_metadata,
+        has_init_logging,
+    ))
 }
 
 /// Extract metadata from a function
@@ -1085,6 +1175,26 @@ fn ws_method_opt_to_call(ws_method: &Option<syn::Ident>) -> proc_macro2::TokenSt
     }
 }
 
+/// Convert optional WebSocket client method to token stream for identifier
+fn ws_client_method_opt_to_token(
+    ws_client_method: &Option<syn::Ident>,
+) -> proc_macro2::TokenStream {
+    if let Some(method_name) = ws_client_method {
+        quote! { Some(stringify!(#method_name)) }
+    } else {
+        quote! { None::<&str> }
+    }
+}
+
+/// Convert optional WebSocket client method to token stream for method call
+fn ws_client_method_opt_to_call(ws_client_method: &Option<syn::Ident>) -> proc_macro2::TokenStream {
+    if let Some(method_name) = ws_client_method {
+        quote! { unsafe { (*state).#method_name(channel_id, request) }; }
+    } else {
+        quote! {}
+    }
+}
+
 //------------------------------------------------------------------------------
 // HTTP Helper Functions
 //------------------------------------------------------------------------------
@@ -1420,6 +1530,55 @@ fn generate_http_handler_dispatcher(
 // WebSocket Helper Functions
 //------------------------------------------------------------------------------
 
+/// Generate WebSocket client message handler
+fn generate_websocket_client_handler(
+    ws_client_method_call: &proc_macro2::TokenStream,
+    self_ty: &Box<syn::Type>,
+) -> proc_macro2::TokenStream {
+    quote! {
+        hyperware_process_lib::logging::debug!("Processing WebSocket client message from: {:?}", message.source());
+
+        let blob_opt = message.blob();
+
+        match serde_json::from_slice::<hyperware_process_lib::http::client::HttpClientRequest>(message.body()) {
+            Ok(request) => {
+                match request {
+                    hyperware_process_lib::http::client::HttpClientRequest::WebSocketPush { ref channel_id, ref message_type } => {
+                        hyperware_process_lib::logging::debug!("Received WebSocket client push on channel {}, type: {:?}", channel_id, message_type);
+
+                        let Some(blob) = blob_opt else {
+                            hyperware_process_lib::logging::error!(
+                                "Failed to get blob for WebSocket client push on channel {}. This indicates a malformed WebSocket message.",
+                                channel_id
+                            );
+                            return;
+                        };
+
+                        hyperware_process_lib::logging::debug!("Processing WebSocket client message with {} bytes", blob.bytes.len());
+
+                        #ws_client_method_call
+
+                        unsafe {
+                            hyperware_process_lib::hyperapp::maybe_save_state(&mut *state);
+                        }
+                    },
+                    hyperware_process_lib::http::client::HttpClientRequest::WebSocketClose { channel_id } => {
+                        hyperware_process_lib::logging::debug!("WebSocket client connection closed on channel {}", channel_id);
+                    }
+                }
+            },
+            Err(e) => {
+                hyperware_process_lib::logging::error!(
+                    "Failed to parse WebSocket client request: {}\n\
+                    Source: {:?}\n\
+                    This usually indicates a malformed message from the http-client service.",
+                    e, message.source()
+                );
+            }
+        }
+    }
+}
+
 /// Generate WebSocket message handler
 fn generate_websocket_handler(
     ws_method_call: &proc_macro2::TokenStream,
@@ -1536,6 +1695,7 @@ fn generate_message_handlers(
     self_ty: &Box<syn::Type>,
     handler_arms: &HandlerDispatch,
     ws_method_call: &proc_macro2::TokenStream,
+    ws_client_method_call: &proc_macro2::TokenStream,
     http_handlers: &[&FunctionMetadata],
 ) -> proc_macro2::TokenStream {
     let http_request_match_arms = &handler_arms.http;
@@ -1547,12 +1707,18 @@ fn generate_message_handlers(
     let http_dispatcher =
         generate_http_handler_dispatcher(http_handlers, self_ty, http_request_match_arms);
     let websocket_handlers = generate_websocket_handler(ws_method_call, self_ty);
+    let websocket_client_handler =
+        generate_websocket_client_handler(ws_client_method_call, self_ty);
     let local_message_handler =
         generate_local_message_handler(self_ty, local_and_remote_request_match_arms);
     let remote_message_handler =
         generate_remote_message_handler(self_ty, remote_request_match_arms);
 
     quote! {
+        /// Handle WebSocket client messages
+        fn handle_websocket_client_message(state: *mut #self_ty, message: hyperware_process_lib::Message) {
+            #websocket_client_handler
+        }
         /// Handle messages from the HTTP server
         fn handle_http_server_message(state: *mut #self_ty, message: hyperware_process_lib::Message) {
             let blob_opt = message.blob();
@@ -1607,6 +1773,7 @@ fn generate_component_impl(
     response_enum: &proc_macro2::TokenStream,
     init_method_details: &InitMethodDetails,
     ws_method_details: &WsMethodDetails,
+    ws_client_method_details: &WsClientMethodDetails,
     handler_arms: &HandlerDispatch,
     has_init_logging: bool,
     http_handlers: &[&FunctionMetadata],
@@ -1641,10 +1808,16 @@ fn generate_component_impl(
     let init_method_ident = &init_method_details.identifier;
     let init_method_call = &init_method_details.call;
     let ws_method_call = &ws_method_details.call;
+    let ws_client_method_call = &ws_client_method_details.call;
 
     // Generate message handler functions
-    let message_handlers =
-        generate_message_handlers(self_ty, handler_arms, ws_method_call, http_handlers);
+    let message_handlers = generate_message_handlers(
+        self_ty,
+        handler_arms,
+        ws_method_call,
+        ws_client_method_call,
+        http_handlers,
+    );
 
     // Generate the logging initialization conditionally
     let logging_init = if !has_init_logging {
@@ -1750,6 +1923,8 @@ fn generate_component_impl(
                                 hyperware_process_lib::Message::Request { .. } => {
                                     if message.is_local() && message.source().process == "http-server:distro:sys" {
                                         handle_http_server_message(&mut state, message);
+                                    } else if message.is_local() && message.source().process == "http-client:distro:sys" {
+                                        handle_websocket_client_message(&mut state, message);
                                     } else if message.is_local() {
                                         handle_local_message(&mut state, message);
                                     } else {
@@ -1804,7 +1979,7 @@ pub fn hyperprocess(attr: TokenStream, item: TokenStream) -> TokenStream {
     let self_ty = &impl_block.self_ty;
 
     // Analyze the methods in the implementation block
-    let (init_method, ws_method, function_metadata, has_init_logging) =
+    let (init_method, ws_method, ws_client_method, function_metadata, has_init_logging) =
         match analyze_methods(&impl_block) {
             Ok(methods) => methods,
             Err(e) => return e.to_compile_error().into(),
@@ -1861,6 +2036,12 @@ pub fn hyperprocess(attr: TokenStream, item: TokenStream) -> TokenStream {
         call: ws_method_opt_to_call(&ws_method),
     };
 
+    // Prepare WebSocket client method details for code generation
+    let ws_client_method_details = WsClientMethodDetails {
+        identifier: ws_client_method_opt_to_token(&ws_client_method),
+        call: ws_client_method_opt_to_call(&ws_client_method),
+    };
+
     // Generate the final output
     generate_component_impl(
         &args,
@@ -1870,6 +2051,7 @@ pub fn hyperprocess(attr: TokenStream, item: TokenStream) -> TokenStream {
         &response_enum,
         &init_method_details,
         &ws_method_details,
+        &ws_client_method_details,
         &handler_arms,
         has_init_logging,
         &handlers.http,

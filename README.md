@@ -72,9 +72,9 @@ struct MyProcessState {
     name = "My Process",
     ui = Some(HttpBindingConfig::default()),
     endpoints = vec![
-        Binding::Http { 
-            path: "/api", 
-            config: HttpBindingConfig::new(false, false, false, None) 
+        Binding::Http {
+            path: "/api",
+            config: HttpBindingConfig::new(false, false, false, None)
         }
     ],
     save_config = SaveOptions::EveryMessage,
@@ -85,7 +85,7 @@ impl MyProcessState {
     async fn initialize(&mut self) {
         // Initialize your process
     }
-    
+
     #[http]
     async fn handle_http_request(&mut self, value: String) -> String {
         self.counter += 1;
@@ -216,14 +216,14 @@ fn handle_any_method(&mut self) -> Response {
 
 **Supported Methods**: `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `HEAD`, `OPTIONS`
 
-### Smart Routing System 
+### Smart Routing System
 
 The framework uses intelligent priority-based routing that automatically chooses the best handler based on the request:
 
 #### **Priority Logic:**
 
 1. **Has Request Body** → Tries parameterized handlers first
-   - Deserializes body to determine the correct handler 
+   - Deserializes body to determine the correct handler
    - Falls back to parameter-less handlers if deserialization fails
 
 2. **No Request Body** → Tries parameter-less handlers first
@@ -238,7 +238,7 @@ The framework uses intelligent priority-based routing that automatically chooses
 #[http(method = "GET", path = "/health")]
 fn health_check(&mut self) -> &'static str { "OK" }
 
-#[http(method = "DELETE", path = "/api/users")]  
+#[http(method = "DELETE", path = "/api/users")]
 fn delete_all_users(&mut self) -> Result<String, String> {
     // DELETE requests typically have no body
     self.users.clear();
@@ -276,10 +276,10 @@ async fn async_handler(&mut self, data: MyData) -> Result<String, String> {
     // get_path() and get_http_method() work correctly in async handlers!
     let path = get_path().unwrap_or_default();
     let method = get_http_method().unwrap_or_default();
-    
+
     // Make async calls to other services
     let result = external_api_call(data).await?;
-    
+
     Ok(format!("Processed {} {} with result: {}", method, path, result))
 }
 ```
@@ -289,7 +289,7 @@ async fn async_handler(&mut self, data: MyData) -> Result<String, String> {
 ```rust
 // Request: POST /api/upload (with body)
 // 1. ✅ Tries: create_item handler if body matches {"CreateItem": ...}
-// 2. ✅ Tries: update_settings handler if body matches {"UpdateSettings": ...}  
+// 2. ✅ Tries: update_settings handler if body matches {"UpdateSettings": ...}
 // 3. ✅ Falls back to: handle_post_with_data for unmatched bodies
 // 4. ✅ Ultimate fallback: handle_any_method
 
@@ -318,7 +318,7 @@ impl MyApp {
         // This handler ONLY responds to GET /api/users
         self.users.clone()
     }
-    
+
     // Handler with parameters (path optional but recommended)
     #[http(method = "POST", path = "/api/users")]
     fn create_user(&mut self, user: NewUser) -> User {
@@ -327,14 +327,14 @@ impl MyApp {
         self.users.push(user.clone());
         user
     }
-    
+
     // Parameter-less handler accepting all methods (path optional)
     #[http(path = "/api/status")]
     fn api_status(&mut self) -> Status {
         // This handles ALL methods to /api/status
         Status { healthy: true }
     }
-    
+
     // Parameter-less handler for any path - uses get_path() for routing
     #[http]
     fn dynamic_handler(&mut self) -> Response {
@@ -344,7 +344,7 @@ impl MyApp {
             _ => Response::not_found("Unknown endpoint")
         }
     }
-    
+
     // Handler with parameters without specific path
     #[http(method = "POST")]
     fn generic_post_handler(&mut self, data: GenericData) -> Response {
@@ -389,17 +389,39 @@ async fn initialize(&mut self) {
 
 #### WebSocket Handler
 
-For defining a `ws` endpoint, do:
+For defining a `ws` endpoint (server-side WebSocket), do:
 
 ```rust
 #[ws]
 fn handle_websocket(&mut self, channel_id: u32, message_type: WsMessageType, blob: LazyLoadBlob) {
-    // Process WebSocket messages
+    // Process WebSocket messages from connected clients
 }
 ```
 
 if you have multiple ws endpoints, you can match on the ws endpoints with `get_path()`, which will give you an `Option<String>`.
 if you want to access the http server, you can call `get_server()`, giving you access to `HttpServer`.
+
+#### WebSocket Client Handler
+
+For handling WebSocket client connections (when your process acts as a WebSocket client), use:
+
+```rust
+#[ws_client]
+fn handle_ws_client(&mut self, channel_id: u32, request: HttpClientRequest) {
+    match request {
+        HttpClientRequest::WebSocketPush { channel_id, message_type } => {
+            // Handle incoming message from the WebSocket server
+            let blob = get_blob().unwrap();
+            // Process the message...
+        },
+        HttpClientRequest::WebSocketClose { channel_id } => {
+            // Handle connection close
+        }
+    }
+}
+```
+
+This handler receives messages from WebSocket servers that your process has connected to using the `http-client:distro:sys` service.
 
 ### Binding Endpoints
 
@@ -450,7 +472,7 @@ struct AsyncRequesterState {
         Binding::Http {
             path: "/api",
             config: HttpBindingConfig::new(false, false, false, None),
-        }, 
+        },
         Binding::Ws {
             path: "/ws",
             config: WsBindingConfig::new(false, false, false),
@@ -527,22 +549,22 @@ fn search(&mut self) -> Vec<SearchResult> {
     if let Some(params) = get_query_params() {
         // params is a HashMap<String, String> with:
         // {"q" => "rust", "limit" => "20", "sort" => "date"}
-        
+
         // Get search query (with default)
         let query = params.get("q")
             .map(|s| s.to_string())
             .unwrap_or_else(|| "".to_string());
-        
+
         // Parse numeric parameters
         let limit = params.get("limit")
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(10);
-        
+
         // Get optional parameters
         let sort_by = params.get("sort")
             .map(|s| s.as_str())
             .unwrap_or("relevance");
-        
+
         // Use the parameters
         self.perform_search(&query, limit, sort_by)
     } else {
@@ -565,7 +587,7 @@ The macro generates detailed logging for all operations:
 ```rust
 // Automatically generated logs help track request flow:
 // Phase 1: Checking parameter-less handlers for path: '/api/users', method: 'GET'
-// Successfully parsed HTTP path: '/api/users' 
+// Successfully parsed HTTP path: '/api/users'
 // Set current_path to: Some("/api/users")
 // Set current_http_method to: Some("GET")
 ```
@@ -574,11 +596,11 @@ The macro generates detailed logging for all operations:
 
 ```
 // Wrong handler name
-Invalid request format. Expected one of the parameterized handler formats, 
+Invalid request format. Expected one of the parameterized handler formats,
 but got: {"WrongHandler":{"message":"test"}}
 
 // Invalid JSON syntax
-Invalid JSON in request body. Expected: {"CreateUser":[ ...parameters... ]}. 
+Invalid JSON in request body. Expected: {"CreateUser":[ ...parameters... ]}.
 Parse error: expected value at line 1 column 1
 
 // Empty body for parameterized handler
@@ -659,11 +681,11 @@ Content-Type: application/json
 }
 
 // ✅ This works - body must wrap parameters in handler name
-POST /api/users  
+POST /api/users
 Content-Type: application/json
 {
   "CreateUser": {
-    "name": "John Doe", 
+    "name": "John Doe",
     "email": "john@example.com"
   }
 }
@@ -694,11 +716,11 @@ async fn create_user(&mut self, user: User) -> Result<String, String> { ... }
 async fn async_handler(&mut self, data: MyData) -> String {
     // ✅ Works - context is preserved by the framework
     let path = get_path().unwrap_or_default();
-    
+
     // ⚠️ Potential issue - long-running tasks might lose context
     tokio::time::sleep(Duration::from_secs(30)).await;
     let path2 = get_path(); // May be None if context expires
-    
+
     format!("Path: {}", path)
 }
 ```
@@ -749,7 +771,7 @@ fn handle_file_upload(&mut self) -> Result<String, String> {
 #[http(method = "POST")]
 fn create_user(&mut self, user: User) -> User { ... }
 
-#[http(method = "PUT")] 
+#[http(method = "PUT")]
 fn create_user(&mut self, user: User) -> User { ... } // ERROR: Duplicate CreateUser variant
 ```
 
@@ -767,7 +789,7 @@ fn update_user(&mut self, user: User) -> User { ... }
 fn user_handler(&mut self, user: User) -> User {
     match get_http_method().as_deref() {
         Some("POST") => self.create_user_impl(user),
-        Some("PUT") => self.update_user_impl(user), 
+        Some("PUT") => self.update_user_impl(user),
         _ => panic!("Unsupported method")
     }
 }
@@ -810,7 +832,7 @@ fn health_check(&mut self) -> &'static str { "OK" }
 #[http(method = "POST", path = "/api/users")]
 async fn create_specific_user(&mut self, user: NewUser) -> User { ... }
 
-// Medium-priority dynamic handlers  
+// Medium-priority dynamic handlers
 #[http(method = "POST")]
 async fn create_general(&mut self, data: CreateData) -> Response { ... }
 
@@ -823,7 +845,7 @@ fn catch_all(&mut self) -> Response { ... }
 1. ✅ Matches `health_check` directly (exact path + method)
 2. ❌ No body parsing attempted
 
-**Request: `POST /api/users` with body `{"CreateSpecificUser": {...}}`**  
+**Request: `POST /api/users` with body `{"CreateSpecificUser": {...}}`**
 1. ✅ Matches `create_specific_user` (path + method + body deserialization)
 2. ❌ No fallback needed
 
@@ -855,7 +877,7 @@ fn health_check(&mut self) -> &'static str {
 fn api_router(&mut self) -> Response {
     match (get_http_method().as_deref(), get_path().as_deref()) {
         (Some("GET"), Some("/api/users")) => self.list_users(),
-        (Some("GET"), Some("/api/stats")) => self.get_stats(), 
+        (Some("GET"), Some("/api/stats")) => self.get_stats(),
         _ => Response::not_found("Endpoint not found")
     }
 }
@@ -894,7 +916,7 @@ pub enum ApiError {
 fn validated_handler(&mut self, data: InputData) -> Result<OutputData, ApiError> {
     data.validate()
         .map_err(|e| ApiError::ValidationError(e))?;
-    
+
     self.process(data)
         .map_err(|_| ApiError::InternalError)
 }
@@ -908,10 +930,10 @@ struct MyAppState {
     // ✅ Use reasonable defaults
     pub counter: u64,
     pub users: Vec<User>,
-    
+
     // ✅ Use Options for optional state
     pub last_sync: Option<SystemTime>,
-    
+
     // ✅ Group related data
     pub config: AppConfig,
 }
@@ -922,7 +944,7 @@ impl MyAppState {
         self.counter += 1;
         self.counter
     }
-    
+
     fn add_user(&mut self, user: User) -> Result<(), String> {
         if self.users.iter().any(|u| u.id == user.id) {
             return Err("User already exists".to_string());
@@ -944,7 +966,7 @@ async fn fetch_external_data(&mut self, query: String) -> Result<String, String>
         &external_service_address(),
         10 // timeout in seconds
     ).await;
-    
+
     match result {
         SendResult::Success(response) => Ok(response.data),
         SendResult::Timeout => Err("Request timed out".to_string()),
@@ -974,7 +996,7 @@ The macro will parse arguments like so:
 fn parse_args(attr_args: MetaList) -> syn::Result<HyperProcessArgs> {
     // Parse attributes like name, icon, endpoints, etc.
     // Validate required parameters
-    
+
     Ok(HyperProcessArgs {
         name: name.ok_or_else(|| syn::Error::new(span, "Missing 'name'"))?,
         icon,
@@ -998,7 +1020,7 @@ fn validate_init_method(method: &syn::ImplItemFn) -> syn::Result<()> {
             "Init method must be declared as async",
         ));
     }
-    
+
     // Check parameter and return types
     // ...
 }
@@ -1164,7 +1186,7 @@ where
 {
     // Generate unique correlation ID
     let correlation_id = Uuid::new_v4().to_string();
-    
+
     // Send request with correlation ID
     let _ = Request::to(target)
         .body(serde_json::to_vec(&message).unwrap())
@@ -1174,7 +1196,7 @@ where
 
     // Await response with matching correlation ID
     let response_bytes = ResponseFuture::new(correlation_id).await;
-    
+
     // Process response...
 }
 ```
@@ -1224,7 +1246,7 @@ loop {
     APP_CONTEXT.with(|ctx| {
         ctx.borrow_mut().executor.poll_all_tasks();
     });
-    
+
     // Wait for next message (blocking)
     match await_message() {
         // Process message...
@@ -1309,11 +1331,11 @@ For each handler, the macro generates dispatch code:
 ```rust
 Request::FetchData(id) => {
     let id_captured = id;  // Capture parameter before moving
-    let state_ptr: *mut MyState = state; 
-    
+    let state_ptr: *mut MyState = state;
+
     hyper! {
         let result = unsafe { (*state_ptr).fetch_data(id_captured).await };
-        
+
         // For remote/local handlers
         let resp = Response::new()
             .body(serde_json::to_vec(&result).unwrap());
@@ -1334,8 +1356,8 @@ wit_bindgen::generate!({
     world: #wit_world,
     generate_unused_types: true,
     additional_derives: [
-        serde::Deserialize, 
-        serde::Serialize, 
+        serde::Deserialize,
+        serde::Serialize,
         process_macros::SerdeJsonInto
     ],
 });
@@ -1366,7 +1388,7 @@ impl Guest for Component {
 
         // Setup server with endpoints
         let mut server = setup_server(ui_config.as_ref(), &endpoints);
-        
+
         // Call user's init method if provided
         if #init_method_ident.is_some() {
             #init_method_call
@@ -1402,19 +1424,19 @@ graph TB
     classDef external fill:#222222,color:#ffffff,stroke:#444444,stroke-width:1px
     classDef dataflow fill:#008CBA,color:#ffffff,stroke:#0077A3,stroke-width:1px
     classDef annotation fill:none,color:#FF6600,stroke:none,stroke-width:0px
-    
+
     %% BUILD PHASE - Where components are generated
     subgraph BuildPhase["⚙️ BUILD PHASE"]
         UserSrc[/"User Source Code
         #[hyperprocess] macro
         #[http], #[local], #[remote] methods"/]
-        
+
         subgraph CodeGen["Code Generation Pipeline"]
             direction TB
-            
+
             HyperBindgen["hyper-bindgen CLI
             Scans for #[hyperprocess]"]
-            
+
             subgraph BindgenOutputs["hyper-bindgen Outputs"]
                 direction LR
                 WitFiles["WIT Files
@@ -1424,98 +1446,98 @@ graph TB
                 EnumStructs["Shared Enums & Structs
                 Cross-process types"]
             end
-            
+
             ProcMacro["hyperprocess Macro
             AST Transformation"]
-            
+
             subgraph MacroOutputs["Macro Generated Code"]
                 direction LR
                 ReqResEnums["Request/Response Enums
                 - Generated variants per handler
                 - Parameter & return mappings"]
-                
+
                 HandlerDisp["Handler Dispatch Logic
                 - HTTP/Local/Remote routing
                 - Async handler spawning
                 - Message serialization"]
-                
+
                 AsyncRuntime["Async Runtime Components
                 - ResponseFuture impl
                 - Correlation ID system
                 - Executor & task management"]
-                
+
                 MainLoop["Component Implementation
                 - Message loop
                 - Task polling
                 - Error handling"]
             end
         end
-        
+
         %% Dev-time Connections
         UserSrc --> HyperBindgen
         UserSrc --> ProcMacro
         HyperBindgen --> BindgenOutputs
         ProcMacro --> MacroOutputs
-        
+
         %% Final Compilation
         MacroOutputs --> WasmComp["WebAssembly Component
         WASI Preview 2"]
         BindgenOutputs --> WasmComp
     end
-    
+
     %% RUNTIME PHASE - How processes execute
     subgraph RuntimePhase["⚡ RUNTIME PHASE"]
         subgraph Process["Process A"]
             direction TB
-            
+
             InMsg[/"Incoming Messages"/] --> MsgLoop["Message Loop
             await_message()"]
-            
+
             subgraph ProcessInternals["Process Internals"]
                 direction LR
-                
+
                 MsgLoop --> MsgRouter{"Message Router"}
                 MsgRouter -->|"HTTP"| HttpHandler["HTTP Handlers"]
                 MsgRouter -->|"Local"| LocalHandler["Local Handlers"]
                 MsgRouter -->|"Remote"| RemoteHandler["Remote Handlers"]
                 MsgRouter -->|"WebSocket"| WsHandler["WebSocket Handlers"]
                 MsgRouter -->|"Response"| RespHandler["Response Handler"]
-                
+
                 %% State management
                 HttpHandler & LocalHandler & RemoteHandler & WsHandler --> AppState[("Application State
                 SaveOptions::EveryMessage")]
-                
+
                 %% Async handling
                 RespHandler --> RespRegistry["Response Registry
                 correlation_id → response"]
-                
+
                 CallStub["RPC Stub Calls
                 e.g. increment_counter_rpc()"]
             end
-            
+
             %% Asynchronous execution
             AppState -.->|"Persist"| Storage[(Persistent Storage)]
-            
+
             MsgLoop -.->|"Poll Tasks"| Executor["Async Executor
             poll_all_tasks()"]
-            
+
             ProcessInternals -->|"Generate"| OutMsg[/"Outgoing Messages"/]
         end
-        
+
         %% External communication points
         ExtClient1["HTTP Client"] & ExtClient2["WebSocket Client"] --> InMsg
         OutMsg --> Process2["Process B"]
         Process2 --> InMsg
     end
-    
+
     %% ASYNC FLOW - Detailed sequence of async communication
     subgraph AsyncFlow["⚡ ASYNC MESSAGE EXCHANGE"]
         direction LR
-        
+
         AF1["1️⃣ Call RPC Stub
-        increment_counter_rpc(target, 42)"] --> 
+        increment_counter_rpc(target, 42)"] -->
         AF2["2️⃣ Generate UUID
-        correlation_id = uuid::new_v4()"] --> 
+        correlation_id = uuid::new_v4()"] -->
         AF3["3️⃣ Create Future
         ResponseFuture(correlation_id)"] -->
         AF4["4️⃣ Send Request
@@ -1531,21 +1553,21 @@ graph TB
         AF9["9️⃣ Future Polling
         ResponseFuture finds response and completes"]
     end
-    
+
     %% KEY CONNECTIONS BETWEEN SECTIONS
-    
+
     %% Build to Runtime
     WasmComp ==>|"Load Component"| Process
-    
+
     %% Runtime to Async Flow
     CallStub ==>|"Initiates"| AF1
     AF9 ==>|"Resume Future in"| Executor
     RespRegistry ===|"Powers"| AF8
-    
+
     %% Annotation for the Correlation ID system
     CorrelationNote["CORRELATION SYSTEM
     Tracks request→response with UUIDs"] -.-> RespRegistry
-    
+
     %% Style elements
     class UserSrc,WitFiles,CallerUtils,EnumStructs,ReqResEnums,HandlerDisp,AsyncRuntime,MainLoop,WasmComp mainflow
     class MsgLoop,Executor,RespRegistry,RespHandler,AF2,AF8 accent
@@ -1553,7 +1575,7 @@ graph TB
     class AF1,AF3,AF4,AF5,AF6,AF7,AF9 asyncflow
     class ExtClient1,ExtClient2,Process2,Storage,InMsg,OutMsg external
     class CorrelationNote annotation
-    
+
     %% Subgraph styling
     style BuildPhase fill:#171717,stroke:#333333,color:#ffffff
     style CodeGen fill:#222222,stroke:#444444,color:#ffffff
