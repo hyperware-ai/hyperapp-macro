@@ -535,20 +535,21 @@ fn validate_websocket_client_method(method: &syn::ImplItemFn) -> syn::Result<()>
         ));
     }
 
-    // Ensure there are exactly 3 parameters (including &mut self)
-    if method.sig.inputs.len() != 3 {
+    // Ensure there are exactly 4 parameters (including &mut self)
+    if method.sig.inputs.len() != 4 {
         return Err(syn::Error::new_spanned(
             &method.sig,
-            "WebSocket client method must take exactly 2 additional parameters: channel_id and request",
+            "WebSocket client method must take exactly 3 additional parameters: channel_id, message_type, and blob",
         ));
     }
 
     // Get parameters (excluding &mut self)
     let params: Vec<_> = method.sig.inputs.iter().skip(1).collect();
 
-    // Check parameter types
+    // Check parameter types (we're not doing exact type checking, just rough check)
     let channel_id_param = &params[0];
-    let request_param = &params[1];
+    let message_type_param = &params[1];
+    let blob_param = &params[2];
 
     if let syn::FnArg::Typed(pat_type) = channel_id_param {
         if !pat_type.ty.to_token_stream().to_string().contains("u32") {
@@ -559,12 +560,26 @@ fn validate_websocket_client_method(method: &syn::ImplItemFn) -> syn::Result<()>
         }
     }
 
-    if let syn::FnArg::Typed(pat_type) = request_param {
+    if let syn::FnArg::Typed(pat_type) = message_type_param {
         let type_str = pat_type.ty.to_token_stream().to_string();
-        if !type_str.contains("HttpClientRequest") {
+        if !type_str.contains("WsMessageType") && !type_str.contains("MessageType") {
             return Err(syn::Error::new_spanned(
                 pat_type,
-                "Second parameter of WebSocket client method must be request: HttpClientRequest",
+                "Second parameter of WebSocket client method must be message_type: WsMessageType",
+            ));
+        }
+    }
+
+    if let syn::FnArg::Typed(pat_type) = blob_param {
+        if !pat_type
+            .ty
+            .to_token_stream()
+            .to_string()
+            .contains("LazyLoadBlob")
+        {
+            return Err(syn::Error::new_spanned(
+                pat_type,
+                "Third parameter of WebSocket client method must be blob: LazyLoadBlob",
             ));
         }
     }
@@ -1189,7 +1204,7 @@ fn ws_client_method_opt_to_token(
 /// Convert optional WebSocket client method to token stream for method call
 fn ws_client_method_opt_to_call(ws_client_method: &Option<syn::Ident>) -> proc_macro2::TokenStream {
     if let Some(method_name) = ws_client_method {
-        quote! { unsafe { (*state).#method_name(channel_id, request) }; }
+        quote! { unsafe { (*state).#method_name(channel_id, message_type, blob) }; }
     } else {
         quote! {}
     }
@@ -1541,13 +1556,17 @@ fn generate_websocket_client_handler(
         match serde_json::from_slice::<hyperware_process_lib::http::client::HttpClientRequest>(message.body()) {
             Ok(request) => {
                 match request {
-                    hyperware_process_lib::http::client::HttpClientRequest::WebSocketPush { ref channel_id, ref message_type } => {
+                    hyperware_process_lib::http::client::HttpClientRequest::WebSocketPush { channel_id, message_type } => {
                         hyperware_process_lib::logging::debug!("Received WebSocket client push on channel {}, type: {:?}", channel_id, message_type);
 
-                        if message_type == &hyperware_process_lib::http::server::WsMessageType::Ping {
+                        if message_type == hyperware_process_lib::http::server::WsMessageType::Pong {
+                            return;
+                        }
+
+                        if message_type == hyperware_process_lib::http::server::WsMessageType::Ping {
                             // Respond to Pings with Pongs
                             hyperware_process_lib::http::client::send_ws_client_push(
-                                channel_id.clone(),
+                                channel_id,
                                 hyperware_process_lib::http::server::WsMessageType::Pong,
                                 hyperware_process_lib::LazyLoadBlob::default(),
                             );
@@ -1563,7 +1582,6 @@ fn generate_websocket_client_handler(
                         };
 
                         hyperware_process_lib::logging::debug!("Processing WebSocket client message with {} bytes", blob.bytes.len());
-                        let channel_id = channel_id.clone();
 
                         #ws_client_method_call
 
@@ -1573,6 +1591,16 @@ fn generate_websocket_client_handler(
                     },
                     hyperware_process_lib::http::client::HttpClientRequest::WebSocketClose { channel_id } => {
                         hyperware_process_lib::logging::debug!("WebSocket client connection closed on channel {}", channel_id);
+
+                        // Call the handler with a special Close message type and empty blob
+                        let message_type = hyperware_process_lib::http::server::WsMessageType::Close;
+                        let blob = hyperware_process_lib::LazyLoadBlob::default();
+
+                        #ws_client_method_call
+
+                        unsafe {
+                            hyperware_process_lib::hyperapp::maybe_save_state(&mut *state);
+                        }
                     }
                 }
             },
@@ -1596,6 +1624,10 @@ fn generate_websocket_handler(
     quote! {
         hyperware_process_lib::http::server::HttpServerRequest::WebSocketPush { channel_id, message_type } => {
             hyperware_process_lib::logging::debug!("Received WebSocket message on channel {}, type: {:?}", channel_id, message_type);
+
+            if message_type == hyperware_process_lib::http::server::WsMessageType::Pong {
+                return;
+            }
 
             if message_type == hyperware_process_lib::http::server::WsMessageType::Ping {
                 // Respond to Pings with Pongs

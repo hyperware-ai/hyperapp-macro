@@ -407,21 +407,27 @@ For handling WebSocket client connections (when your process acts as a WebSocket
 
 ```rust
 #[ws_client]
-fn handle_ws_client(&mut self, channel_id: u32, request: HttpClientRequest) {
-    match request {
-        HttpClientRequest::WebSocketPush { channel_id, message_type } => {
+fn handle_ws_client(&mut self, channel_id: u32, message_type: WsMessageType, blob: LazyLoadBlob) {
+    match message_type {
+        WsMessageType::Text | WsMessageType::Binary => {
             // Handle incoming message from the WebSocket server
-            let blob = get_blob().unwrap();
+            // The blob contains the message data
+            let data = String::from_utf8_lossy(&blob.bytes);
             // Process the message...
         },
-        HttpClientRequest::WebSocketClose { channel_id } => {
+        WsMessageType::Close => {
             // Handle connection close
+            // blob will be empty for close messages
+        },
+        _ => {
+            // Handle other message types (Ping/Pong are handled automatically)
         }
     }
 }
 ```
 
 This handler receives messages from WebSocket servers that your process has connected to using the `http-client:distro:sys` service.
+The signature matches that of `#[ws]` for consistency.
 
 ### Binding Endpoints
 
