@@ -1555,6 +1555,7 @@ fn generate_websocket_client_handler(
                         };
 
                         hyperware_process_lib::logging::debug!("Processing WebSocket client message with {} bytes", blob.bytes.len());
+                        let channel_id = channel_id.clone();
 
                         #ws_client_method_call
 
