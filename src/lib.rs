@@ -1536,8 +1536,6 @@ fn generate_websocket_client_handler(
     self_ty: &Box<syn::Type>,
 ) -> proc_macro2::TokenStream {
     quote! {
-        hyperware_process_lib::logging::debug!("Processing WebSocket client message from: {:?}", message.source());
-
         let blob_opt = message.blob();
 
         match serde_json::from_slice::<hyperware_process_lib::http::client::HttpClientRequest>(message.body()) {
