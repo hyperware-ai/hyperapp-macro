@@ -114,6 +114,20 @@ struct InitMethodDetails {
     call: proc_macro2::TokenStream,
 }
 
+/// WebSocket method info from analysis
+#[derive(Clone)]
+struct WsMethodInfo {
+    name: syn::Ident,
+    is_async: bool,
+}
+
+/// WebSocket client method info from analysis
+#[derive(Clone)]
+struct WsClientMethodInfo {
+    name: syn::Ident,
+    is_async: bool,
+}
+
 /// WebSocket method details for code generation
 struct WsMethodDetails {
     identifier: proc_macro2::TokenStream,
@@ -619,11 +633,11 @@ fn validate_request_response_function(method: &syn::ImplItemFn) -> syn::Result<(
 fn analyze_methods(
     impl_block: &ItemImpl,
 ) -> syn::Result<(
-    Option<syn::Ident>,    // init method
-    Option<syn::Ident>,    // ws method
-    Option<syn::Ident>,    // ws_client method
-    Vec<FunctionMetadata>, // metadata for request/response methods
-    bool,                  // whether init method contains logging init
+    Option<syn::Ident>,           // init method
+    Option<WsMethodInfo>,         // ws method
+    Option<WsClientMethodInfo>,   // ws_client method
+    Vec<FunctionMetadata>,        // metadata for request/response methods
+    bool,                         // whether init method contains logging init
 )> {
     let mut init_method = None;
     let mut ws_method = None;
@@ -681,7 +695,10 @@ fn analyze_methods(
                         "Multiple #[ws] methods defined",
                     ));
                 }
-                ws_method = Some(ident);
+                ws_method = Some(WsMethodInfo {
+                    name: ident,
+                    is_async: method.sig.asyncness.is_some(),
+                });
                 continue;
             }
 
@@ -700,7 +717,10 @@ fn analyze_methods(
                         "Multiple #[ws_client] methods defined",
                     ));
                 }
-                ws_client_method = Some(ident);
+                ws_client_method = Some(WsClientMethodInfo {
+                    name: ident,
+                    is_async: method.sig.asyncness.is_some(),
+                });
                 continue;
             }
 
@@ -1173,8 +1193,9 @@ fn init_method_opt_to_call(
 }
 
 /// Convert optional WebSocket method to token stream for identifier
-fn ws_method_opt_to_token(ws_method: &Option<syn::Ident>) -> proc_macro2::TokenStream {
-    if let Some(method_name) = ws_method {
+fn ws_method_opt_to_token(ws_method: &Option<WsMethodInfo>) -> proc_macro2::TokenStream {
+    if let Some(method_info) = ws_method {
+        let method_name = &method_info.name;
         quote! { Some(stringify!(#method_name)) }
     } else {
         quote! { None::<&str> }
@@ -1182,9 +1203,21 @@ fn ws_method_opt_to_token(ws_method: &Option<syn::Ident>) -> proc_macro2::TokenS
 }
 
 /// Convert optional WebSocket method to token stream for method call
-fn ws_method_opt_to_call(ws_method: &Option<syn::Ident>) -> proc_macro2::TokenStream {
-    if let Some(method_name) = ws_method {
-        quote! { unsafe { (*state).#method_name(channel_id, message_type, blob) }; }
+fn ws_method_opt_to_call(ws_method: &Option<WsMethodInfo>, self_ty: &Box<syn::Type>) -> proc_macro2::TokenStream {
+    if let Some(method_info) = ws_method {
+        let method_name = &method_info.name;
+        if method_info.is_async {
+            quote! {
+                // Create a raw pointer to state for use in the async block
+                let state_ptr: *mut #self_ty = state;
+                hyperware_process_lib::hyperapp::run_async! {
+                    // Inside the async block, use the pointer to access state
+                    unsafe { (*state_ptr).#method_name(channel_id, message_type, blob).await };
+                }
+            }
+        } else {
+            quote! { unsafe { (*state).#method_name(channel_id, message_type, blob) }; }
+        }
     } else {
         quote! {}
     }
@@ -1192,9 +1225,10 @@ fn ws_method_opt_to_call(ws_method: &Option<syn::Ident>) -> proc_macro2::TokenSt
 
 /// Convert optional WebSocket client method to token stream for identifier
 fn ws_client_method_opt_to_token(
-    ws_client_method: &Option<syn::Ident>,
+    ws_client_method: &Option<WsClientMethodInfo>,
 ) -> proc_macro2::TokenStream {
-    if let Some(method_name) = ws_client_method {
+    if let Some(method_info) = ws_client_method {
+        let method_name = &method_info.name;
         quote! { Some(stringify!(#method_name)) }
     } else {
         quote! { None::<&str> }
@@ -1202,9 +1236,21 @@ fn ws_client_method_opt_to_token(
 }
 
 /// Convert optional WebSocket client method to token stream for method call
-fn ws_client_method_opt_to_call(ws_client_method: &Option<syn::Ident>) -> proc_macro2::TokenStream {
-    if let Some(method_name) = ws_client_method {
-        quote! { unsafe { (*state).#method_name(channel_id, message_type, blob) }; }
+fn ws_client_method_opt_to_call(ws_client_method: &Option<WsClientMethodInfo>, self_ty: &Box<syn::Type>) -> proc_macro2::TokenStream {
+    if let Some(method_info) = ws_client_method {
+        let method_name = &method_info.name;
+        if method_info.is_async {
+            quote! {
+                // Create a raw pointer to state for use in the async block
+                let state_ptr: *mut #self_ty = state;
+                hyperware_process_lib::hyperapp::run_async! {
+                    // Inside the async block, use the pointer to access state
+                    unsafe { (*state_ptr).#method_name(channel_id, message_type, blob).await };
+                }
+            }
+        } else {
+            quote! { unsafe { (*state).#method_name(channel_id, message_type, blob) }; }
+        }
     } else {
         quote! {}
     }
@@ -2084,13 +2130,13 @@ pub fn hyperprocess(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Prepare WebSocket method details for code generation
     let ws_method_details = WsMethodDetails {
         identifier: ws_method_opt_to_token(&ws_method),
-        call: ws_method_opt_to_call(&ws_method),
+        call: ws_method_opt_to_call(&ws_method, self_ty),
     };
 
     // Prepare WebSocket client method details for code generation
     let ws_client_method_details = WsClientMethodDetails {
         identifier: ws_client_method_opt_to_token(&ws_client_method),
-        call: ws_client_method_opt_to_call(&ws_client_method),
+        call: ws_client_method_opt_to_call(&ws_client_method, self_ty),
     };
 
     // Generate the final output

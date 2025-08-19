@@ -392,20 +392,30 @@ async fn initialize(&mut self) {
 For defining a `ws` endpoint (server-side WebSocket), do:
 
 ```rust
+// Synchronous WebSocket handler
 #[ws]
 fn handle_websocket(&mut self, channel_id: u32, message_type: WsMessageType, blob: LazyLoadBlob) {
     // Process WebSocket messages from connected clients
 }
+
+// Asynchronous WebSocket handler
+#[ws]
+async fn handle_websocket_async(&mut self, channel_id: u32, message_type: WsMessageType, blob: LazyLoadBlob) {
+    // Process WebSocket messages asynchronously
+    // Can make async calls to other services
+    let result = some_async_operation().await;
+}
 ```
 
-if you have multiple ws endpoints, you can match on the ws endpoints with `get_path()`, which will give you an `Option<String>`.
-if you want to access the http server, you can call `get_server()`, giving you access to `HttpServer`.
+Both sync and async variants are supported. If you have multiple ws endpoints, you can match on the ws endpoints with `get_path()`, which will give you an `Option<String>`.
+If you want to access the http server, you can call `get_server()`, giving you access to `HttpServer`.
 
 #### WebSocket Client Handler
 
 For handling WebSocket client connections (when your process acts as a WebSocket client), use:
 
 ```rust
+// Synchronous WebSocket client handler
 #[ws_client]
 fn handle_ws_client(&mut self, channel_id: u32, message_type: WsMessageType, blob: LazyLoadBlob) {
     match message_type {
@@ -424,9 +434,17 @@ fn handle_ws_client(&mut self, channel_id: u32, message_type: WsMessageType, blo
         }
     }
 }
+
+// Asynchronous WebSocket client handler
+#[ws_client]
+async fn handle_ws_client_async(&mut self, channel_id: u32, message_type: WsMessageType, blob: LazyLoadBlob) {
+    // Process WebSocket client messages asynchronously
+    let processed_data = async_process_message(&blob).await;
+    // Send response back if needed...
+}
 ```
 
-This handler receives messages from WebSocket servers that your process has connected to using the `http-client:distro:sys` service.
+Both sync and async variants are supported. This handler receives messages from WebSocket servers that your process has connected to using the `http-client:distro:sys` service.
 The signature matches that of `#[ws]` for consistency.
 
 ### Binding Endpoints
