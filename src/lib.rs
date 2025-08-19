@@ -1546,6 +1546,16 @@ fn generate_websocket_client_handler(
                     hyperware_process_lib::http::client::HttpClientRequest::WebSocketPush { ref channel_id, ref message_type } => {
                         hyperware_process_lib::logging::debug!("Received WebSocket client push on channel {}, type: {:?}", channel_id, message_type);
 
+                        if message_type == &hyperware_process_lib::http::Server::WsMessageType::Ping {
+                            // Respond to Pings with Pongs
+                            hyperware_process_lib::http::client::send_ws_client_push(
+                                channel_id.clone(),
+                                hyperware_process_lib::http::Server::WsMessageType::Pong,
+                                hyperware_process_lib::LazyLoadBlob::default(),
+                            );
+                            return;
+                        }
+
                         let Some(blob) = blob_opt else {
                             hyperware_process_lib::logging::error!(
                                 "Failed to get blob for WebSocket client push on channel {}. This indicates a malformed WebSocket message.",
@@ -1588,6 +1598,16 @@ fn generate_websocket_handler(
     quote! {
         hyperware_process_lib::http::server::HttpServerRequest::WebSocketPush { channel_id, message_type } => {
             hyperware_process_lib::logging::debug!("Received WebSocket message on channel {}, type: {:?}", channel_id, message_type);
+
+            if message_type == hyperware_process_lib::http::Server::WsMessageType::Ping {
+                // Respond to Pings with Pongs
+                hyperware_process_lib::http::server::send_ws_client_push(
+                    channel_id,
+                    hyperware_process_lib::http::Server::WsMessageType::Pong,
+                    hyperware_process_lib::LazyLoadBlob::default(),
+                );
+                return;
+            }
 
             let Some(blob) = blob_opt else {
                 hyperware_process_lib::logging::error!(
