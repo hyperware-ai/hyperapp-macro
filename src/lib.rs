@@ -1601,7 +1601,7 @@ fn generate_websocket_handler(
 
             if message_type == hyperware_process_lib::http::Server::WsMessageType::Ping {
                 // Respond to Pings with Pongs
-                hyperware_process_lib::http::server::send_ws_client_push(
+                hyperware_process_lib::http::server::send_ws_push(
                     channel_id,
                     hyperware_process_lib::http::Server::WsMessageType::Pong,
                     hyperware_process_lib::LazyLoadBlob::default(),
