@@ -116,6 +116,20 @@ struct InitMethodDetails {
     call: proc_macro2::TokenStream,
 }
 
+/// WebSocket method info from analysis
+#[derive(Clone)]
+struct WsMethodInfo {
+    name: syn::Ident,
+    is_async: bool,
+}
+
+/// WebSocket client method info from analysis
+#[derive(Clone)]
+struct WsClientMethodInfo {
+    name: syn::Ident,
+    is_async: bool,
+}
+
 /// WebSocket method details for code generation
 struct WsMethodDetails {
     identifier: proc_macro2::TokenStream,
@@ -124,6 +138,12 @@ struct WsMethodDetails {
 
 /// Timer method details for code generation
 struct TimerMethodDetails {
+    identifier: proc_macro2::TokenStream,
+    call: proc_macro2::TokenStream,
+}
+
+/// WebSocket client method details for code generation
+struct WsClientMethodDetails {
     identifier: proc_macro2::TokenStream,
     call: proc_macro2::TokenStream,
 }
@@ -343,6 +363,7 @@ fn clean_impl_block(impl_block: &ItemImpl) -> ItemImpl {
                     && !attr.path().is_ident("remote")
                     && !attr.path().is_ident("timer")
                     && !attr.path().is_ident("ws")
+                    && !attr.path().is_ident("ws_client")
             });
         }
     }
@@ -565,6 +586,76 @@ fn validate_timer_method(method: &syn::ImplItemFn) -> syn::Result<()> {
     Ok(())
 }
 
+/// Validate the websocket client method signature
+fn validate_websocket_client_method(method: &syn::ImplItemFn) -> syn::Result<()> {
+    // Ensure first param is &mut self
+    if !has_valid_self_receiver(method) {
+        return Err(syn::Error::new_spanned(
+            &method.sig,
+            "WebSocket client method must take &mut self as first parameter",
+        ));
+    }
+
+    // Ensure there are exactly 4 parameters (including &mut self)
+    if method.sig.inputs.len() != 4 {
+        return Err(syn::Error::new_spanned(
+            &method.sig,
+            "WebSocket client method must take exactly 3 additional parameters: channel_id, message_type, and blob",
+        ));
+    }
+
+    // Get parameters (excluding &mut self)
+    let params: Vec<_> = method.sig.inputs.iter().skip(1).collect();
+
+    // Check parameter types (we're not doing exact type checking, just rough check)
+    let channel_id_param = &params[0];
+    let message_type_param = &params[1];
+    let blob_param = &params[2];
+
+    if let syn::FnArg::Typed(pat_type) = channel_id_param {
+        if !pat_type.ty.to_token_stream().to_string().contains("u32") {
+            return Err(syn::Error::new_spanned(
+                pat_type,
+                "First parameter of WebSocket client method must be channel_id: u32",
+            ));
+        }
+    }
+
+    if let syn::FnArg::Typed(pat_type) = message_type_param {
+        let type_str = pat_type.ty.to_token_stream().to_string();
+        if !type_str.contains("WsMessageType") && !type_str.contains("MessageType") {
+            return Err(syn::Error::new_spanned(
+                pat_type,
+                "Second parameter of WebSocket client method must be message_type: WsMessageType",
+            ));
+        }
+    }
+
+    if let syn::FnArg::Typed(pat_type) = blob_param {
+        if !pat_type
+            .ty
+            .to_token_stream()
+            .to_string()
+            .contains("LazyLoadBlob")
+        {
+            return Err(syn::Error::new_spanned(
+                pat_type,
+                "Third parameter of WebSocket client method must be blob: LazyLoadBlob",
+            ));
+        }
+    }
+
+    // Validate return type (must be unit)
+    if !matches!(method.sig.output, ReturnType::Default) {
+        return Err(syn::Error::new_spanned(
+            &method.sig.output,
+            "WebSocket client method must not return a value",
+        ));
+    }
+
+    Ok(())
+}
+
 /// Validate a request-response function signature
 fn validate_request_response_function(method: &syn::ImplItemFn) -> syn::Result<()> {
     // Ensure first param is &mut self
@@ -589,14 +680,16 @@ fn validate_request_response_function(method: &syn::ImplItemFn) -> syn::Result<(
 fn analyze_methods(
     impl_block: &ItemImpl,
 ) -> syn::Result<(
-    Option<syn::Ident>,    // init method
-    Option<syn::Ident>,    // ws method
-    Option<syn::Ident>,    // timer method
-    Vec<FunctionMetadata>, // metadata for request/response methods
-    bool,                  // whether init method contains logging init
+    Option<syn::Ident>,           // init method
+    Option<WsMethodInfo>,         // ws method
+    Option<WsClientMethodInfo>,   // ws_client method
+    Option<syn::Ident>,           // timer method
+    Vec<FunctionMetadata>,        // metadata for request/response methods
+    bool,                         // whether init method contains logging init
 )> {
     let mut init_method = None;
     let mut ws_method = None;
+    let mut ws_client_method = None;
     let mut timer_method = None;
     let mut has_init_logging = false;
     let mut function_metadata = Vec::new();
@@ -612,10 +705,11 @@ fn analyze_methods(
             let has_remote = has_attribute(method, "remote");
             let has_timer = has_attribute(method, "timer");
             let has_ws = has_attribute(method, "ws");
+            let has_ws_client = has_attribute(method, "ws_client");
 
             // Handle init method
             if has_init {
-                if has_http || has_local || has_remote || has_timer || has_ws {
+                if has_http || has_local || has_remote || has_timer || has_ws || has_ws_client {
                     return Err(syn::Error::new_spanned(
                         method,
                         "#[init] cannot be combined with other attributes",
@@ -638,7 +732,7 @@ fn analyze_methods(
 
             // Handle WebSocket method
             if has_ws {
-                if has_http || has_local || has_remote || has_timer || has_init {
+                if has_http || has_local || has_remote || has_timer || has_init || has_ws_client {
                     return Err(syn::Error::new_spanned(
                         method,
                         "#[ws] cannot be combined with other attributes",
@@ -651,13 +745,38 @@ fn analyze_methods(
                         "Multiple #[ws] methods defined",
                     ));
                 }
-                ws_method = Some(ident);
+                ws_method = Some(WsMethodInfo {
+                    name: ident,
+                    is_async: method.sig.asyncness.is_some(),
+                });
+                continue;
+            }
+
+            // Handle WebSocket client method
+            if has_ws_client {
+                if has_http || has_local || has_remote || has_timer || has_init || has_ws {
+                    return Err(syn::Error::new_spanned(
+                        method,
+                        "#[ws_client] cannot be combined with other attributes",
+                    ));
+                }
+                validate_websocket_client_method(method)?;
+                if ws_client_method.is_some() {
+                    return Err(syn::Error::new_spanned(
+                        method,
+                        "Multiple #[ws_client] methods defined",
+                    ));
+                }
+                ws_client_method = Some(WsClientMethodInfo {
+                    name: ident,
+                    is_async: method.sig.asyncness.is_some(),
+                });
                 continue;
             }
 
             // Handle timer method
             if has_timer {
-                if has_http || has_local || has_remote || has_init || has_ws {
+                if has_http || has_local || has_remote || has_init || has_ws || has_ws_client {
                     return Err(syn::Error::new_spanned(
                         method,
                         "#[timer] cannot be combined with other attributes",
@@ -729,7 +848,14 @@ fn analyze_methods(
         }
     }
 
-    Ok((init_method, ws_method, timer_method, function_metadata, has_init_logging))
+    Ok((
+        init_method,
+        ws_method,
+        ws_client_method,
+        timer_method,
+        function_metadata,
+        has_init_logging,
+    ))
 }
 
 /// Extract metadata from a function
@@ -991,7 +1117,7 @@ fn generate_response_handling(
                 let response_bytes = serde_json::to_vec(&result).unwrap();
 
                 // Get headers from the current HTTP context
-                let headers_opt = hyperware_app_common::APP_HELPERS.with(|helpers| {
+                let headers_opt = hyperware_process_lib::hyperapp::APP_HELPERS.with(|helpers| {
                     helpers.borrow().current_http_context.as_ref().and_then(|ctx| {
                         if ctx.response_headers.is_empty() {
                             None
@@ -1008,7 +1134,7 @@ fn generate_response_handling(
                 );
 
                 // Clear HTTP context immediately after sending the response
-                hyperware_app_common::clear_http_request_context();
+                hyperware_process_lib::hyperapp::clear_http_request_context();
             }
         }
     }
@@ -1028,7 +1154,7 @@ fn generate_async_handler_arm(
             HPMRequest::#variant_name{} => {
                 // Create a raw pointer to state for use in the async block
                 let state_ptr: *mut #self_ty = state;
-                hyperware_app_common::hyper! {
+                hyperware_process_lib::hyperapp::run_async! {
                     // Inside the async block, use the pointer to access state
                     let result = unsafe { (*state_ptr).#fn_name().await };
                     #response_handling
@@ -1042,7 +1168,7 @@ fn generate_async_handler_arm(
                 let param_captured = param;  // Capture param before moving into async block
                 // Create a raw pointer to state for use in the async block
                 let state_ptr: *mut #self_ty = state;
-                hyperware_app_common::hyper! {
+                hyperware_process_lib::hyperapp::run_async! {
                     // Inside the async block, use the pointer to access state
                     let result = unsafe { (*state_ptr).#fn_name(param_captured).await };
                     #response_handling
@@ -1066,7 +1192,7 @@ fn generate_async_handler_arm(
                 #(#capture_statements)*
                 // Create a raw pointer to state for use in the async block
                 let state_ptr: *mut #self_ty = state;
-                hyperware_app_common::hyper! {
+                hyperware_process_lib::hyperapp::run_async! {
                     // Inside the async block, use the pointer to access state
                     let result = unsafe { (*state_ptr).#fn_name(#(#captured_names),*).await };
                     #response_handling
@@ -1134,7 +1260,7 @@ fn init_method_opt_to_call(
         quote! {
             // Create a pointer to state for use in the async block
             let state_ptr: *mut #self_ty = &mut state;
-            hyperware_app_common::hyper! {
+            hyperware_process_lib::hyperapp::run_async! {
                 // Inside the async block, use the pointer to access state
                 unsafe { (*state_ptr).#method_name().await };
             }
@@ -1145,8 +1271,9 @@ fn init_method_opt_to_call(
 }
 
 /// Convert optional WebSocket method to token stream for identifier
-fn ws_method_opt_to_token(ws_method: &Option<syn::Ident>) -> proc_macro2::TokenStream {
-    if let Some(method_name) = ws_method {
+fn ws_method_opt_to_token(ws_method: &Option<WsMethodInfo>) -> proc_macro2::TokenStream {
+    if let Some(method_info) = ws_method {
+        let method_name = &method_info.name;
         quote! { Some(stringify!(#method_name)) }
     } else {
         quote! { None::<&str> }
@@ -1154,9 +1281,54 @@ fn ws_method_opt_to_token(ws_method: &Option<syn::Ident>) -> proc_macro2::TokenS
 }
 
 /// Convert optional WebSocket method to token stream for method call
-fn ws_method_opt_to_call(ws_method: &Option<syn::Ident>) -> proc_macro2::TokenStream {
-    if let Some(method_name) = ws_method {
-        quote! { unsafe { (*state).#method_name(channel_id, message_type, blob) }; }
+fn ws_method_opt_to_call(ws_method: &Option<WsMethodInfo>, self_ty: &Box<syn::Type>) -> proc_macro2::TokenStream {
+    if let Some(method_info) = ws_method {
+        let method_name = &method_info.name;
+        if method_info.is_async {
+            quote! {
+                // Create a raw pointer to state for use in the async block
+                let state_ptr: *mut #self_ty = state;
+                hyperware_process_lib::hyperapp::run_async! {
+                    // Inside the async block, use the pointer to access state
+                    unsafe { (*state_ptr).#method_name(channel_id, message_type, blob).await };
+                }
+            }
+        } else {
+            quote! { unsafe { (*state).#method_name(channel_id, message_type, blob) }; }
+        }
+    } else {
+        quote! {}
+    }
+}
+
+/// Convert optional WebSocket client method to token stream for identifier
+fn ws_client_method_opt_to_token(
+    ws_client_method: &Option<WsClientMethodInfo>,
+) -> proc_macro2::TokenStream {
+    if let Some(method_info) = ws_client_method {
+        let method_name = &method_info.name;
+        quote! { Some(stringify!(#method_name)) }
+    } else {
+        quote! { None::<&str> }
+    }
+}
+
+/// Convert optional WebSocket client method to token stream for method call
+fn ws_client_method_opt_to_call(ws_client_method: &Option<WsClientMethodInfo>, self_ty: &Box<syn::Type>) -> proc_macro2::TokenStream {
+    if let Some(method_info) = ws_client_method {
+        let method_name = &method_info.name;
+        if method_info.is_async {
+            quote! {
+                // Create a raw pointer to state for use in the async block
+                let state_ptr: *mut #self_ty = state;
+                hyperware_process_lib::hyperapp::run_async! {
+                    // Inside the async block, use the pointer to access state
+                    unsafe { (*state_ptr).#method_name(channel_id, message_type, blob).await };
+                }
+            }
+        } else {
+            quote! { unsafe { (*state).#method_name(channel_id, message_type, blob) }; }
+        }
     } else {
         quote! {}
     }
@@ -1187,8 +1359,8 @@ fn timer_method_opt_to_call(timer_method: &Option<syn::Ident>) -> proc_macro2::T
 /// Generate HTTP context setup code
 fn generate_http_context_setup() -> proc_macro2::TokenStream {
     quote! {
-        hyperware_app_common::APP_HELPERS.with(|helpers| {
-            helpers.borrow_mut().current_http_context = Some(hyperware_app_common::HttpRequestContext {
+        hyperware_process_lib::hyperapp::APP_HELPERS.with(|helpers| {
+            helpers.borrow_mut().current_http_context = Some(hyperware_process_lib::hyperapp::HttpRequestContext {
                 request: http_request,
                 response_headers: std::collections::HashMap::new(),
             });
@@ -1200,7 +1372,7 @@ fn generate_http_context_setup() -> proc_macro2::TokenStream {
 /// Generate HTTP context cleanup code
 fn generate_http_context_cleanup() -> proc_macro2::TokenStream {
     quote! {
-        hyperware_app_common::clear_http_request_context();
+        hyperware_process_lib::hyperapp::clear_http_request_context();
     }
 }
 
@@ -1224,13 +1396,13 @@ fn generate_http_error_response(
 /// Generate HTTP method and path parsing code
 fn generate_http_request_parsing() -> proc_macro2::TokenStream {
     quote! {
-        let http_method = hyperware_app_common::get_http_method()
+        let http_method = hyperware_process_lib::hyperapp::get_http_method()
             .unwrap_or_else(|| {
                 hyperware_process_lib::logging::warn!("Failed to get HTTP method from request context");
                 "UNKNOWN".to_string()
             });
 
-        let current_path = match hyperware_app_common::get_path() {
+        let current_path = match hyperware_process_lib::hyperapp::get_path() {
             Some(path) => {
                 hyperware_process_lib::logging::debug!("Successfully parsed HTTP path: '{}'", path);
                 path
@@ -1242,7 +1414,7 @@ fn generate_http_request_parsing() -> proc_macro2::TokenStream {
                     None,
                     b"Invalid path: no HTTP context available".to_vec(),
                 );
-                hyperware_app_common::clear_http_request_context();
+                hyperware_process_lib::hyperapp::clear_http_request_context();
                 return;
             }
         };
@@ -1284,7 +1456,7 @@ fn generate_parameterized_handler_dispatch(
                                 HPMRequest::#variant_name(..) => {
                                     unsafe {
                                         #http_request_match_arms
-                                        hyperware_app_common::maybe_save_state(&mut *state);
+                                        hyperware_process_lib::hyperapp::maybe_save_state(&mut *state);
                                     }
                                 },
                                 _ => {
@@ -1319,7 +1491,7 @@ fn generate_parameterized_handler_dispatch(
                                 None,
                                 error_details.into_bytes()
                             );
-                            hyperware_app_common::clear_http_request_context();
+                            hyperware_process_lib::hyperapp::clear_http_request_context();
                             return;
                         }
                     }
@@ -1372,7 +1544,7 @@ fn generate_parameterless_handler_dispatch(
                 }
             };
 
-            let headers_opt = hyperware_app_common::APP_HELPERS.with(|helpers| {
+            let headers_opt = hyperware_process_lib::hyperapp::APP_HELPERS.with(|helpers| {
                 helpers.borrow().current_http_context.as_ref().and_then(|ctx| {
                     if ctx.response_headers.is_empty() {
                         None
@@ -1388,23 +1560,23 @@ fn generate_parameterless_handler_dispatch(
                 response_bytes
             );
 
-            hyperware_app_common::clear_http_request_context();
+            hyperware_process_lib::hyperapp::clear_http_request_context();
         };
 
         let handler_body = if handler.is_async {
             quote! {
                 let state_ptr: *mut #self_ty = state;
-                hyperware_app_common::hyper! {
+                hyperware_process_lib::hyperapp::run_async! {
                     let result = unsafe { (*state_ptr).#fn_name().await };
                     #response_handling
                 }
-                unsafe { hyperware_app_common::maybe_save_state(&mut *state); }
+                unsafe { hyperware_process_lib::hyperapp::maybe_save_state(&mut *state); }
             }
         } else {
             quote! {
                 let result = unsafe { (*state).#fn_name() };
                 #response_handling
-                unsafe { hyperware_app_common::maybe_save_state(&mut *state); }
+                unsafe { hyperware_process_lib::hyperapp::maybe_save_state(&mut *state); }
             }
         };
 
@@ -1465,7 +1637,7 @@ fn generate_http_handler_dispatcher(
                         hyperware_process_lib::logging::debug!("Successfully parsed request body, dispatching to specific handler");
                         unsafe {
                             #http_request_match_arms
-                            hyperware_app_common::maybe_save_state(&mut *state);
+                            hyperware_process_lib::hyperapp::maybe_save_state(&mut *state);
                         }
                         return;
                     },
@@ -1491,7 +1663,7 @@ fn generate_http_handler_dispatcher(
                             None,
                             error_details.into_bytes()
                         );
-                        hyperware_app_common::clear_http_request_context();
+                        hyperware_process_lib::hyperapp::clear_http_request_context();
                         return;
                     }
                 }
@@ -1507,13 +1679,84 @@ fn generate_http_handler_dispatcher(
             None,
             format!("No handler found for {} {}", http_method, current_path).into_bytes(),
         );
-        hyperware_app_common::clear_http_request_context();
+        hyperware_process_lib::hyperapp::clear_http_request_context();
     }
 }
 
 //------------------------------------------------------------------------------
 // WebSocket Helper Functions
 //------------------------------------------------------------------------------
+
+/// Generate WebSocket client message handler
+fn generate_websocket_client_handler(
+    ws_client_method_call: &proc_macro2::TokenStream,
+    self_ty: &Box<syn::Type>,
+) -> proc_macro2::TokenStream {
+    quote! {
+        let blob_opt = message.blob();
+
+        match serde_json::from_slice::<hyperware_process_lib::http::client::HttpClientRequest>(message.body()) {
+            Ok(request) => {
+                match request {
+                    hyperware_process_lib::http::client::HttpClientRequest::WebSocketPush { channel_id, message_type } => {
+                        hyperware_process_lib::logging::debug!("Received WebSocket client push on channel {}, type: {:?}", channel_id, message_type);
+
+                        if message_type == hyperware_process_lib::http::server::WsMessageType::Pong {
+                            return;
+                        }
+
+                        if message_type == hyperware_process_lib::http::server::WsMessageType::Ping {
+                            // Respond to Pings with Pongs
+                            hyperware_process_lib::http::client::send_ws_client_push(
+                                channel_id,
+                                hyperware_process_lib::http::server::WsMessageType::Pong,
+                                hyperware_process_lib::LazyLoadBlob::default(),
+                            );
+                            return;
+                        }
+
+                        let Some(blob) = blob_opt else {
+                            hyperware_process_lib::logging::error!(
+                                "Failed to get blob for WebSocket client push on channel {}. This indicates a malformed WebSocket message.",
+                                channel_id
+                            );
+                            return;
+                        };
+
+                        hyperware_process_lib::logging::debug!("Processing WebSocket client message with {} bytes", blob.bytes.len());
+
+                        #ws_client_method_call
+
+                        unsafe {
+                            hyperware_process_lib::hyperapp::maybe_save_state(&mut *state);
+                        }
+                    },
+                    hyperware_process_lib::http::client::HttpClientRequest::WebSocketClose { channel_id } => {
+                        hyperware_process_lib::logging::debug!("WebSocket client connection closed on channel {}", channel_id);
+
+                        // Call the handler with a special Close message type and empty blob
+                        let message_type = hyperware_process_lib::http::server::WsMessageType::Close;
+                        let blob = hyperware_process_lib::LazyLoadBlob::default();
+
+                        #ws_client_method_call
+
+                        unsafe {
+                            hyperware_process_lib::hyperapp::maybe_save_state(&mut *state);
+                        }
+                    }
+                }
+            },
+            Err(e) => {
+                hyperware_process_lib::logging::error!(
+                    "Failed to parse WebSocket client request: {}\n\
+                    Source: {:?}\n\
+                    This usually indicates a malformed message from the http-client service.",
+                    e, message.source()
+                );
+            }
+        }
+    }
+}
 
 /// Generate WebSocket message handler
 fn generate_websocket_handler(
@@ -1523,6 +1766,20 @@ fn generate_websocket_handler(
     quote! {
         hyperware_process_lib::http::server::HttpServerRequest::WebSocketPush { channel_id, message_type } => {
             hyperware_process_lib::logging::debug!("Received WebSocket message on channel {}, type: {:?}", channel_id, message_type);
+
+            if message_type == hyperware_process_lib::http::server::WsMessageType::Pong {
+                return;
+            }
+
+            if message_type == hyperware_process_lib::http::server::WsMessageType::Ping {
+                // Respond to Pings with Pongs
+                hyperware_process_lib::http::server::send_ws_push(
+                    channel_id,
+                    hyperware_process_lib::http::server::WsMessageType::Pong,
+                    hyperware_process_lib::LazyLoadBlob::default(),
+                );
+                return;
+            }
 
             let Some(blob) = blob_opt else {
                 hyperware_process_lib::logging::error!(
@@ -1536,19 +1793,19 @@ fn generate_websocket_handler(
             #ws_method_call
 
             unsafe {
-                hyperware_app_common::maybe_save_state(&mut *state);
+                hyperware_process_lib::hyperapp::maybe_save_state(&mut *state);
             }
         },
         hyperware_process_lib::http::server::HttpServerRequest::WebSocketOpen { path, channel_id } => {
             hyperware_process_lib::logging::debug!("WebSocket connection opened on path '{}' with channel {}", path, channel_id);
-            match hyperware_app_common::get_server() {
+            match hyperware_process_lib::hyperapp::get_server() {
                 Some(server) => server.handle_websocket_open(&path, channel_id),
                 None => hyperware_process_lib::logging::error!("Failed to get server instance for WebSocket open event")
             }
         },
         hyperware_process_lib::http::server::HttpServerRequest::WebSocketClose(channel_id) => {
             hyperware_process_lib::logging::debug!("WebSocket connection closed on channel {}", channel_id);
-            match hyperware_app_common::get_server() {
+            match hyperware_process_lib::hyperapp::get_server() {
                 Some(server) => server.handle_websocket_close(channel_id),
                 None => hyperware_process_lib::logging::error!("Failed to get server instance for WebSocket close event")
             }
@@ -1573,7 +1830,7 @@ fn generate_local_message_handler(
                 Ok(request) => {
                     unsafe {
                         #match_arms
-                        hyperware_app_common::maybe_save_state(&mut *state);
+                        hyperware_process_lib::hyperapp::maybe_save_state(&mut *state);
                     }
                 },
                 Err(e) => {
@@ -1606,7 +1863,7 @@ fn generate_remote_message_handler(
                 Ok(request) => {
                     unsafe {
                         #match_arms
-                        hyperware_app_common::maybe_save_state(&mut *state);
+                        hyperware_process_lib::hyperapp::maybe_save_state(&mut *state);
                     }
                 },
                 Err(e) => {
@@ -1631,6 +1888,7 @@ fn generate_message_handlers(
     self_ty: &Box<syn::Type>,
     handler_arms: &HandlerDispatch,
     ws_method_call: &proc_macro2::TokenStream,
+    ws_client_method_call: &proc_macro2::TokenStream,
     timer_method_call: &proc_macro2::TokenStream,
     http_handlers: &[&FunctionMetadata],
 ) -> proc_macro2::TokenStream {
@@ -1643,12 +1901,18 @@ fn generate_message_handlers(
     let http_dispatcher =
         generate_http_handler_dispatcher(http_handlers, self_ty, http_request_match_arms);
     let websocket_handlers = generate_websocket_handler(ws_method_call, self_ty);
+    let websocket_client_handler =
+        generate_websocket_client_handler(ws_client_method_call, self_ty);
     let local_message_handler =
         generate_local_message_handler(self_ty, local_and_remote_request_match_arms);
     let remote_message_handler =
         generate_remote_message_handler(self_ty, remote_request_match_arms);
 
     quote! {
+        /// Handle WebSocket client messages
+        fn handle_websocket_client_message(state: *mut #self_ty, message: hyperware_process_lib::Message) {
+            #websocket_client_handler
+        }
         /// Handle messages from the HTTP server
         fn handle_http_server_message(state: *mut #self_ty, message: hyperware_process_lib::Message) {
             let blob_opt = message.blob();
@@ -1703,6 +1967,7 @@ fn generate_component_impl(
     response_enum: &proc_macro2::TokenStream,
     init_method_details: &InitMethodDetails,
     ws_method_details: &WsMethodDetails,
+    ws_client_method_details: &WsClientMethodDetails,
     timer_method_details: &TimerMethodDetails,
     handler_arms: &HandlerDispatch,
     has_init_logging: bool,
@@ -1738,12 +2003,19 @@ fn generate_component_impl(
     let init_method_ident = &init_method_details.identifier;
     let init_method_call = &init_method_details.call;
     let ws_method_call = &ws_method_details.call;
+    let ws_client_method_call = &ws_client_method_details.call;
     let timer_method_call = &timer_method_details.call;
     let timer_method_ident = &timer_method_details.identifier;
 
     // Generate message handler functions
-    let message_handlers =
-        generate_message_handlers(self_ty, handler_arms, ws_method_call, timer_method_call, http_handlers);
+    let message_handlers = generate_message_handlers(
+        self_ty,
+        handler_arms,
+        ws_method_call,
+        ws_client_method_call,
+        timer_method_call,
+        http_handlers,
+    );
 
     // Generate the logging initialization conditionally
     let logging_init = if !has_init_logging {
@@ -1768,10 +2040,9 @@ fn generate_component_impl(
             additional_derives: [serde::Deserialize, serde::Serialize, process_macros::SerdeJsonInto],
         });
 
-        use hyperware_app_common::hyperware_process_lib as hyperware_process_lib;
         use hyperware_process_lib::http::server::HttpBindingConfig;
         use hyperware_process_lib::http::server::WsBindingConfig;
-        use hyperware_app_common::Binding;
+        use hyperware_process_lib::hyperapp::Binding;
 
         #cleaned_impl_block
 
@@ -1785,12 +2056,12 @@ fn generate_component_impl(
         impl Guest for Component {
             fn init(_our: String) {
                 // Initialize our state
-                let mut state = hyperware_app_common::initialize_state::<#self_ty>();
+                let mut state = hyperware_process_lib::hyperapp::initialize_state::<#self_ty>();
 
                 // Set to persist state according to user setting
-                hyperware_app_common::APP_CONTEXT.with(|ctx| {
+                hyperware_process_lib::hyperapp::APP_CONTEXT.with(|ctx| {
                     ctx.borrow_mut().hidden_state = Some(
-                        hyperware_app_common::HiddenState::new(#save_config)
+                        hyperware_process_lib::hyperapp::HiddenState::new(#save_config)
                     );
                 });
 
@@ -1809,8 +2080,8 @@ fn generate_component_impl(
                 #logging_init
 
                 // Setup server with endpoints
-                let mut server = hyperware_app_common::setup_server(ui_config.as_ref(), &endpoints);
-                hyperware_app_common::APP_HELPERS.with(|ctx| {
+                let mut server = hyperware_process_lib::hyperapp::setup_server(ui_config.as_ref(), &endpoints);
+                hyperware_process_lib::hyperapp::APP_HELPERS.with(|ctx| {
                     ctx.borrow_mut().current_server = Some(&mut server);
                 });
 
@@ -1821,19 +2092,19 @@ fn generate_component_impl(
 
                 // Main event loop
                 loop {
-                    hyperware_app_common::APP_CONTEXT.with(|ctx| {
+                    hyperware_process_lib::hyperapp::APP_CONTEXT.with(|ctx| {
                         ctx.borrow_mut().executor.poll_all_tasks();
                     });
 
                     match hyperware_process_lib::await_message() {
                         Ok(message) => {
-                            hyperware_app_common::APP_HELPERS.with(|ctx| {
+                            hyperware_process_lib::hyperapp::APP_HELPERS.with(|ctx| {
                                 ctx.borrow_mut().current_message = Some(message.clone());
                             });
 
                             // Store old state if needed (for OnDiff save option)
                             // This only stores if old_state is None (first time or after a save)
-                            hyperware_app_common::store_old_state(&state);
+                            hyperware_process_lib::hyperapp::store_old_state(&state);
 
                             // Check if this is a timer response first
                             if #timer_method_ident.is_some() {
@@ -1841,7 +2112,7 @@ fn generate_component_impl(
                                     if message.source().process() == "timer" && message.source().package() == "distro" && message.source().publisher() == "sys" {
                                         let timer_context = message.context().map(|bytes| bytes.to_vec());
                                         #timer_method_call
-                                        hyperware_app_common::maybe_save_state(&mut state);
+                                        hyperware_process_lib::hyperapp::maybe_save_state(&mut state);
                                         continue;
                                     }
                                 }
@@ -1854,7 +2125,7 @@ fn generate_component_impl(
                                         .map(|bytes| String::from_utf8_lossy(bytes).to_string())
                                         .unwrap_or_else(|| "no context".to_string());
 
-                                    hyperware_app_common::RESPONSE_REGISTRY.with(|registry| {
+                                    hyperware_process_lib::hyperapp::RESPONSE_REGISTRY.with(|registry| {
                                         let mut registry_mut = registry.borrow_mut();
                                         registry_mut.insert(correlation_id, body);
                                     });
@@ -1862,6 +2133,8 @@ fn generate_component_impl(
                                 hyperware_process_lib::Message::Request { .. } => {
                                     if message.is_local() && message.source().process == "http-server:distro:sys" {
                                         handle_http_server_message(&mut state, message);
+                                    } else if message.is_local() && message.source().process == "http-client:distro:sys" {
+                                        handle_websocket_client_message(&mut state, message);
                                     } else if message.is_local() {
                                         handle_local_message(&mut state, message);
                                     } else {
@@ -1879,7 +2152,7 @@ fn generate_component_impl(
                                 let correlation_id = String::from_utf8_lossy(context)
                                     .to_string();
 
-                                hyperware_app_common::RESPONSE_REGISTRY.with(|registry| {
+                                hyperware_process_lib::hyperapp::RESPONSE_REGISTRY.with(|registry| {
                                     let mut registry_mut = registry.borrow_mut();
                                     registry_mut.insert(correlation_id, serde_json::to_vec(error).unwrap());
                                 });
@@ -1916,7 +2189,7 @@ pub fn hyperprocess(attr: TokenStream, item: TokenStream) -> TokenStream {
     let self_ty = &impl_block.self_ty;
 
     // Analyze the methods in the implementation block
-    let (init_method, ws_method, timer_method, function_metadata, has_init_logging) =
+    let (init_method, ws_method, ws_client_method, timer_method, function_metadata, has_init_logging) =
         match analyze_methods(&impl_block) {
             Ok(methods) => methods,
             Err(e) => return e.to_compile_error().into(),
@@ -1970,7 +2243,13 @@ pub fn hyperprocess(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Prepare WebSocket method details for code generation
     let ws_method_details = WsMethodDetails {
         identifier: ws_method_opt_to_token(&ws_method),
-        call: ws_method_opt_to_call(&ws_method),
+        call: ws_method_opt_to_call(&ws_method, self_ty),
+    };
+
+    // Prepare WebSocket client method details for code generation
+    let ws_client_method_details = WsClientMethodDetails {
+        identifier: ws_client_method_opt_to_token(&ws_client_method),
+        call: ws_client_method_opt_to_call(&ws_client_method, self_ty),
     };
 
     // Prepare timer method details for code generation
@@ -1988,6 +2267,7 @@ pub fn hyperprocess(attr: TokenStream, item: TokenStream) -> TokenStream {
         &response_enum,
         &init_method_details,
         &ws_method_details,
+        &ws_client_method_details,
         &timer_method_details,
         &handler_arms,
         has_init_logging,
