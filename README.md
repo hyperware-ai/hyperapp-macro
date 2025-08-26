@@ -14,6 +14,7 @@ How it feels to use hyperware
   - [Special Methods](#special-methods)
     - [Init Method](#init-method)
     - [WebSocket Handler](#websocket-handler)
+    - [Timer Handler](#timer-handler)
   - [Binding Endpoints](#binding-endpoints)
     - [HTTP Binding Configuration](#http-binding-configuration)
     - [WebSocket Binding Configuration](#websocket-binding-configuration)
@@ -135,13 +136,14 @@ Example:
 
 ### Handler Types
 
-Hyperware processes can handle three types of requests, specified by attributes:
+Hyperware processes can handle four types of requests, specified by attributes:
 
 | Attribute | Description |
 |-----------|-------------|
 | `#[local]` | Handles local (same-node) requests |
 | `#[remote]` | Handles remote (cross-node) requests |
 | `#[http]` | Handles ALL HTTP requests (GET, POST, PUT, DELETE, etc.) |
+| `#[timer]` | Handles timer responses from the timer module |
 
 These attributes can be combined to make a handler respond to multiple request types:
 
@@ -400,6 +402,63 @@ fn handle_websocket(&mut self, channel_id: u32, message_type: WsMessageType, blo
 
 if you have multiple ws endpoints, you can match on the ws endpoints with `get_path()`, which will give you an `Option<String>`.
 if you want to access the http server, you can call `get_server()`, giving you access to `HttpServer`.
+
+#### Timer Handler
+
+For handling timer responses, define a single timer handler:
+
+```rust
+#[timer]
+fn on_timer(&mut self, context: Option<Vec<u8>>) {
+    if let Some(ctx) = context {
+        let timer_id = String::from_utf8_lossy(&ctx);
+        println!("Timer {} fired!", timer_id);
+        
+        match timer_id.as_ref() {
+            "daily-task" => self.run_daily_maintenance(),
+            "reminder" => self.send_reminder(),
+            _ => println!("Unknown timer: {}", timer_id),
+        }
+    } else {
+        println!("Timer fired with no context");
+    }
+}
+```
+
+**Setting Timers from Other Functions:**
+
+Use the `hyperware_process_lib::timer::set_timer` function to schedule timers:
+
+```rust
+use hyperware_process_lib::timer::set_timer;
+
+#[local]
+fn schedule_reminder(&mut self, delay_ms: u64) {
+    // Set a timer with context to identify it later
+    let context = b"reminder".to_vec();
+    set_timer(delay_ms, Some(context));
+}
+
+#[local] 
+fn schedule_daily_task(&mut self) {
+    // Set a timer for 24 hours (86400000 ms) with context
+    let context = b"daily-task".to_vec();
+    set_timer(86400000, Some(context));
+}
+
+#[local]
+fn set_anonymous_timer(&mut self, delay_ms: u64) {
+    // Set a timer without context
+    set_timer(delay_ms, None);
+}
+```
+
+**Key Points:**
+- Only one `#[timer]` handler is allowed per process
+- The handler receives an `Option<Vec<u8>>` context parameter
+- Use the context to distinguish between different timers
+- Timer responses have empty bodies - all data is in the context
+- Timers are one-shot - they fire once and are removed
 
 ### Binding Endpoints
 

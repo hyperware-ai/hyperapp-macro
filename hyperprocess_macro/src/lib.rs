@@ -46,6 +46,7 @@ struct FunctionMetadata {
     is_local: bool,                 // Has #[local] attribute
     is_remote: bool,                // Has #[remote] attribute
     is_http: bool,                  // Has #[http] attribute
+    is_timer: bool,                 // Has #[timer] attribute
     http_methods: Vec<String>,      // HTTP methods this handler accepts (GET, POST, etc.)
     http_path: Option<String>,      // Specific path this handler is bound to (optional)
 }
@@ -56,6 +57,7 @@ enum HandlerType {
     Local,
     Remote,
     Http,
+    Timer,
 }
 
 /// Grouped handlers by type
@@ -116,6 +118,12 @@ struct InitMethodDetails {
 
 /// WebSocket method details for code generation
 struct WsMethodDetails {
+    identifier: proc_macro2::TokenStream,
+    call: proc_macro2::TokenStream,
+}
+
+/// Timer method details for code generation
+struct TimerMethodDetails {
     identifier: proc_macro2::TokenStream,
     call: proc_macro2::TokenStream,
 }
@@ -333,6 +341,7 @@ fn clean_impl_block(impl_block: &ItemImpl) -> ItemImpl {
                     && !attr.path().is_ident("http")
                     && !attr.path().is_ident("local")
                     && !attr.path().is_ident("remote")
+                    && !attr.path().is_ident("timer")
                     && !attr.path().is_ident("ws")
             });
         }
@@ -518,6 +527,52 @@ fn validate_websocket_method(method: &syn::ImplItemFn) -> syn::Result<()> {
     Ok(())
 }
 
+/// Validate the timer method signature
+fn validate_timer_method(method: &syn::ImplItemFn) -> syn::Result<()> {
+    // Ensure first param is &mut self
+    if !has_valid_self_receiver(method) {
+        return Err(syn::Error::new_spanned(
+            &method.sig,
+            "Timer method must take &mut self as first parameter",
+        ));
+    }
+
+    // Timer handlers should have exactly one additional parameter for context
+    if method.sig.inputs.len() != 2 {
+        return Err(syn::Error::new_spanned(
+            &method.sig,
+            "Timer method must take exactly one parameter: context: Option<Vec<u8>>",
+        ));
+    }
+
+    // Check that the second parameter is Option<Vec<u8>> for context
+    let context_param = &method.sig.inputs[1];
+    if let syn::FnArg::Typed(pat_type) = context_param {
+        let type_str = pat_type.ty.to_token_stream().to_string();
+        if !type_str.contains("Option") || !type_str.contains("Vec") {
+            return Err(syn::Error::new_spanned(
+                pat_type,
+                "Timer method parameter must be context: Option<Vec<u8>>",
+            ));
+        }
+    } else {
+        return Err(syn::Error::new_spanned(
+            context_param,
+            "Timer method parameter must be context: Option<Vec<u8>>",
+        ));
+    }
+
+    // Validate return type (must be unit)
+    if !matches!(method.sig.output, ReturnType::Default) {
+        return Err(syn::Error::new_spanned(
+            &method.sig.output,
+            "Timer method must not return a value",
+        ));
+    }
+
+    Ok(())
+}
+
 /// Validate a request-response function signature
 fn validate_request_response_function(method: &syn::ImplItemFn) -> syn::Result<()> {
     // Ensure first param is &mut self
@@ -544,11 +599,13 @@ fn analyze_methods(
 ) -> syn::Result<(
     Option<syn::Ident>,    // init method
     Option<syn::Ident>,    // ws method
+    Option<syn::Ident>,    // timer method
     Vec<FunctionMetadata>, // metadata for request/response methods
     bool,                  // whether init method contains logging init
 )> {
     let mut init_method = None;
     let mut ws_method = None;
+    let mut timer_method = None;
     let mut has_init_logging = false;
     let mut function_metadata = Vec::new();
 
@@ -561,11 +618,12 @@ fn analyze_methods(
             let has_http = has_attribute(method, "http");
             let has_local = has_attribute(method, "local");
             let has_remote = has_attribute(method, "remote");
+            let has_timer = has_attribute(method, "timer");
             let has_ws = has_attribute(method, "ws");
 
             // Handle init method
             if has_init {
-                if has_http || has_local || has_remote || has_ws {
+                if has_http || has_local || has_remote || has_timer || has_ws {
                     return Err(syn::Error::new_spanned(
                         method,
                         "#[init] cannot be combined with other attributes",
@@ -588,7 +646,7 @@ fn analyze_methods(
 
             // Handle WebSocket method
             if has_ws {
-                if has_http || has_local || has_remote || has_init {
+                if has_http || has_local || has_remote || has_timer || has_init {
                     return Err(syn::Error::new_spanned(
                         method,
                         "#[ws] cannot be combined with other attributes",
@@ -602,6 +660,25 @@ fn analyze_methods(
                     ));
                 }
                 ws_method = Some(ident);
+                continue;
+            }
+
+            // Handle timer method
+            if has_timer {
+                if has_http || has_local || has_remote || has_init || has_ws {
+                    return Err(syn::Error::new_spanned(
+                        method,
+                        "#[timer] cannot be combined with other attributes",
+                    ));
+                }
+                validate_timer_method(method)?;
+                if timer_method.is_some() {
+                    return Err(syn::Error::new_spanned(
+                        method,
+                        "Multiple #[timer] methods defined",
+                    ));
+                }
+                timer_method = Some(ident);
                 continue;
             }
 
@@ -660,7 +737,7 @@ fn analyze_methods(
         }
     }
 
-    Ok((init_method, ws_method, function_metadata, has_init_logging))
+    Ok((init_method, ws_method, timer_method, function_metadata, has_init_logging))
 }
 
 /// Extract metadata from a function
@@ -712,6 +789,7 @@ fn extract_function_metadata(
         is_local,
         is_remote,
         is_http,
+        is_timer: false, // Timer handlers are not included in function metadata
         http_methods,
         http_path,
     }
@@ -842,6 +920,7 @@ fn generate_handler_dispatch(
             HandlerType::Local => "No local handlers defined but received a local request",
             HandlerType::Remote => "No remote handlers defined but received a remote request",
             HandlerType::Http => "No HTTP handlers defined but received an HTTP request",
+            HandlerType::Timer => "No timer handlers defined but received a timer response",
         };
         return quote! {
             hyperware_process_lib::logging::warn!(#message);
@@ -852,6 +931,7 @@ fn generate_handler_dispatch(
         HandlerType::Local => "local",
         HandlerType::Remote => "remote",
         HandlerType::Http => "http",
+        HandlerType::Timer => "timer",
     };
 
     let dispatch_arms = handlers
@@ -906,6 +986,11 @@ fn generate_response_handling(
                 let resp = hyperware_process_lib::Response::new()
                     .body(serde_json::to_vec(&result).unwrap());
                 resp.send().unwrap();
+            }
+        }
+        HandlerType::Timer => {
+            quote! {
+                // Timer handlers don't send responses - they just execute
             }
         }
         HandlerType::Http => {
@@ -1080,6 +1165,24 @@ fn ws_method_opt_to_token(ws_method: &Option<syn::Ident>) -> proc_macro2::TokenS
 fn ws_method_opt_to_call(ws_method: &Option<syn::Ident>) -> proc_macro2::TokenStream {
     if let Some(method_name) = ws_method {
         quote! { unsafe { (*state).#method_name(channel_id, message_type, blob) }; }
+    } else {
+        quote! {}
+    }
+}
+
+/// Convert optional timer method to token stream for identifier
+fn timer_method_opt_to_token(timer_method: &Option<syn::Ident>) -> proc_macro2::TokenStream {
+    if let Some(method_name) = timer_method {
+        quote! { Some(stringify!(#method_name)) }
+    } else {
+        quote! { None::<&str> }
+    }
+}
+
+/// Convert optional timer method to token stream for method call
+fn timer_method_opt_to_call(timer_method: &Option<syn::Ident>) -> proc_macro2::TokenStream {
+    if let Some(method_name) = timer_method {
+        quote! { unsafe { (*state).#method_name(context) }; }
     } else {
         quote! {}
     }
@@ -1536,6 +1639,7 @@ fn generate_message_handlers(
     self_ty: &Box<syn::Type>,
     handler_arms: &HandlerDispatch,
     ws_method_call: &proc_macro2::TokenStream,
+    timer_method_call: &proc_macro2::TokenStream,
     http_handlers: &[&FunctionMetadata],
 ) -> proc_macro2::TokenStream {
     let http_request_match_arms = &handler_arms.http;
@@ -1607,6 +1711,7 @@ fn generate_component_impl(
     response_enum: &proc_macro2::TokenStream,
     init_method_details: &InitMethodDetails,
     ws_method_details: &WsMethodDetails,
+    timer_method_details: &TimerMethodDetails,
     handler_arms: &HandlerDispatch,
     has_init_logging: bool,
     http_handlers: &[&FunctionMetadata],
@@ -1641,10 +1746,11 @@ fn generate_component_impl(
     let init_method_ident = &init_method_details.identifier;
     let init_method_call = &init_method_details.call;
     let ws_method_call = &ws_method_details.call;
+    let timer_method_call = &timer_method_details.call;
 
     // Generate message handler functions
     let message_handlers =
-        generate_message_handlers(self_ty, handler_arms, ws_method_call, http_handlers);
+        generate_message_handlers(self_ty, handler_arms, ws_method_call, timer_method_call, http_handlers);
 
     // Generate the logging initialization conditionally
     let logging_init = if !has_init_logging {
@@ -1738,15 +1844,25 @@ fn generate_component_impl(
 
                             match message {
                                 hyperware_process_lib::Message::Response { body, context, .. } => {
-                                    let correlation_id = context
-                                        .as_deref()
-                                        .map(|bytes| String::from_utf8_lossy(bytes).to_string())
-                                        .unwrap_or_else(|| "no context".to_string());
+                                    // Check if this is a timer response
+                                    if message.source().process == "timer" && message.source().package == "distro" && message.source().publisher == "sys" {
+                                        let context = message.context().cloned();
+                                        #timer_method_call
+                                        unsafe {
+                                            hyperware_app_common::maybe_save_state(&mut state);
+                                        }
+                                    } else {
+                                        // Handle other responses (for send_and_await_response)
+                                        let correlation_id = context
+                                            .as_deref()
+                                            .map(|bytes| String::from_utf8_lossy(bytes).to_string())
+                                            .unwrap_or_else(|| "no context".to_string());
 
-                                    hyperware_app_common::RESPONSE_REGISTRY.with(|registry| {
-                                        let mut registry_mut = registry.borrow_mut();
-                                        registry_mut.insert(correlation_id, body);
-                                    });
+                                        hyperware_app_common::RESPONSE_REGISTRY.with(|registry| {
+                                            let mut registry_mut = registry.borrow_mut();
+                                            registry_mut.insert(correlation_id, body);
+                                        });
+                                    }
                                 }
                                 hyperware_process_lib::Message::Request { .. } => {
                                     if message.is_local() && message.source().process == "http-server:distro:sys" {
@@ -1805,7 +1921,7 @@ pub fn hyperprocess(attr: TokenStream, item: TokenStream) -> TokenStream {
     let self_ty = &impl_block.self_ty;
 
     // Analyze the methods in the implementation block
-    let (init_method, ws_method, function_metadata, has_init_logging) =
+    let (init_method, ws_method, timer_method, function_metadata, has_init_logging) =
         match analyze_methods(&impl_block) {
             Ok(methods) => methods,
             Err(e) => return e.to_compile_error().into(),
@@ -1862,6 +1978,12 @@ pub fn hyperprocess(attr: TokenStream, item: TokenStream) -> TokenStream {
         call: ws_method_opt_to_call(&ws_method),
     };
 
+    // Prepare timer method details for code generation
+    let timer_method_details = TimerMethodDetails {
+        identifier: timer_method_opt_to_token(&timer_method),
+        call: timer_method_opt_to_call(&timer_method),
+    };
+
     // Generate the final output
     generate_component_impl(
         &args,
@@ -1871,6 +1993,7 @@ pub fn hyperprocess(attr: TokenStream, item: TokenStream) -> TokenStream {
         &response_enum,
         &init_method_details,
         &ws_method_details,
+        &timer_method_details,
         &handler_arms,
         has_init_logging,
         &handlers.http,
