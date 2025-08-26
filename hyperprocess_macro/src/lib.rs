@@ -545,20 +545,12 @@ fn validate_timer_method(method: &syn::ImplItemFn) -> syn::Result<()> {
         ));
     }
 
-    // Check that the second parameter is Option<Vec<u8>> for context
+    // Check that the second parameter exists (we'll be flexible about the exact type)
     let context_param = &method.sig.inputs[1];
-    if let syn::FnArg::Typed(pat_type) = context_param {
-        let type_str = pat_type.ty.to_token_stream().to_string();
-        if !type_str.contains("Option") || !type_str.contains("Vec") {
-            return Err(syn::Error::new_spanned(
-                pat_type,
-                "Timer method parameter must be context: Option<Vec<u8>>",
-            ));
-        }
-    } else {
+    if !matches!(context_param, syn::FnArg::Typed(_)) {
         return Err(syn::Error::new_spanned(
             context_param,
-            "Timer method parameter must be context: Option<Vec<u8>>",
+            "Timer method must have a context parameter",
         ));
     }
 
@@ -1182,7 +1174,7 @@ fn timer_method_opt_to_token(timer_method: &Option<syn::Ident>) -> proc_macro2::
 /// Convert optional timer method to token stream for method call
 fn timer_method_opt_to_call(timer_method: &Option<syn::Ident>) -> proc_macro2::TokenStream {
     if let Some(method_name) = timer_method {
-        quote! { unsafe { (*state).#method_name(context) }; }
+        quote! { state.#method_name(timer_context); }
     } else {
         quote! {}
     }
@@ -1747,6 +1739,7 @@ fn generate_component_impl(
     let init_method_call = &init_method_details.call;
     let ws_method_call = &ws_method_details.call;
     let timer_method_call = &timer_method_details.call;
+    let timer_method_ident = &timer_method_details.identifier;
 
     // Generate message handler functions
     let message_handlers =
@@ -1842,27 +1835,29 @@ fn generate_component_impl(
                             // This only stores if old_state is None (first time or after a save)
                             hyperware_app_common::store_old_state(&state);
 
+                            // Check if this is a timer response first
+                            if #timer_method_ident.is_some() {
+                                if let hyperware_process_lib::Message::Response { .. } = &message {
+                                    if message.source().process() == "timer" && message.source().package() == "distro" && message.source().publisher() == "sys" {
+                                        let timer_context = message.context().map(|bytes| bytes.to_vec());
+                                        #timer_method_call
+                                        hyperware_app_common::maybe_save_state(&mut state);
+                                        continue;
+                                    }
+                                }
+                            }
+
                             match message {
                                 hyperware_process_lib::Message::Response { body, context, .. } => {
-                                    // Check if this is a timer response
-                                    if message.source().process == "timer" && message.source().package == "distro" && message.source().publisher == "sys" {
-                                        let context = message.context().cloned();
-                                        #timer_method_call
-                                        unsafe {
-                                            hyperware_app_common::maybe_save_state(&mut state);
-                                        }
-                                    } else {
-                                        // Handle other responses (for send_and_await_response)
-                                        let correlation_id = context
-                                            .as_deref()
-                                            .map(|bytes| String::from_utf8_lossy(bytes).to_string())
-                                            .unwrap_or_else(|| "no context".to_string());
+                                    let correlation_id = context
+                                        .as_deref()
+                                        .map(|bytes| String::from_utf8_lossy(bytes).to_string())
+                                        .unwrap_or_else(|| "no context".to_string());
 
-                                        hyperware_app_common::RESPONSE_REGISTRY.with(|registry| {
-                                            let mut registry_mut = registry.borrow_mut();
-                                            registry_mut.insert(correlation_id, body);
-                                        });
-                                    }
+                                    hyperware_app_common::RESPONSE_REGISTRY.with(|registry| {
+                                        let mut registry_mut = registry.borrow_mut();
+                                        registry_mut.insert(correlation_id, body);
+                                    });
                                 }
                                 hyperware_process_lib::Message::Request { .. } => {
                                     if message.is_local() && message.source().process == "http-server:distro:sys" {
