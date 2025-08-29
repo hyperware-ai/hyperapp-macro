@@ -1076,11 +1076,11 @@ fn generate_async_handler_arm(
             HPMRequest::#variant_name{} => {
                 // Create a raw pointer to state for use in the async block
                 let state_ptr: *mut #self_ty = state;
-                hyperware_process_lib::hyperapp::spawn(
+                hyperware_process_lib::hyperapp::spawn(async move {
                     // Inside the async block, use the pointer to access state
                     let result = unsafe { (*state_ptr).#fn_name().await };
                     #response_handling
-                )
+                })
             }
         }
     } else if func.params.len() == 1 {
@@ -1090,11 +1090,11 @@ fn generate_async_handler_arm(
                 let param_captured = param;  // Capture param before moving into async block
                 // Create a raw pointer to state for use in the async block
                 let state_ptr: *mut #self_ty = state;
-                hyperware_process_lib::hyperapp::spawn(
+                hyperware_process_lib::hyperapp::spawn(async move {
                     // Inside the async block, use the pointer to access state
                     let result = unsafe { (*state_ptr).#fn_name(param_captured).await };
                     #response_handling
-                )
+                })
             }
         }
     } else {
@@ -1114,11 +1114,11 @@ fn generate_async_handler_arm(
                 #(#capture_statements)*
                 // Create a raw pointer to state for use in the async block
                 let state_ptr: *mut #self_ty = state;
-                hyperware_process_lib::hyperapp::spawn(
+                hyperware_process_lib::hyperapp::spawn(async move {
                     // Inside the async block, use the pointer to access state
                     let result = unsafe { (*state_ptr).#fn_name(#(#captured_names),*).await };
                     #response_handling
-                )
+                })
             }
         }
     }
@@ -1182,10 +1182,10 @@ fn init_method_opt_to_call(
         quote! {
             // Create a pointer to state for use in the async block
             let state_ptr: *mut #self_ty = &mut state;
-            hyperware_process_lib::hyperapp::spawn(
+            hyperware_process_lib::hyperapp::spawn(async move {
                 // Inside the async block, use the pointer to access state
                 unsafe { (*state_ptr).#method_name().await };
-            )
+            })
         }
     } else {
         quote! {}
@@ -1213,10 +1213,10 @@ fn ws_method_opt_to_call(
             quote! {
                 // Create a raw pointer to state for use in the async block
                 let state_ptr: *mut #self_ty = state;
-                hyperware_process_lib::hyperapp::spawn(
+                hyperware_process_lib::hyperapp::spawn(async move {
                     // Inside the async block, use the pointer to access state
                     unsafe { (*state_ptr).#method_name(channel_id, message_type, blob).await };
-                )
+                })
             }
         } else {
             quote! { unsafe { (*state).#method_name(channel_id, message_type, blob) }; }
@@ -1249,10 +1249,10 @@ fn ws_client_method_opt_to_call(
             quote! {
                 // Create a raw pointer to state for use in the async block
                 let state_ptr: *mut #self_ty = state;
-                hyperware_process_lib::hyperapp::spawn(
+                hyperware_process_lib::hyperapp::spawn(async move {
                     // Inside the async block, use the pointer to access state
                     unsafe { (*state_ptr).#method_name(channel_id, message_type, blob).await };
-                )
+                })
             }
         } else {
             quote! { unsafe { (*state).#method_name(channel_id, message_type, blob) }; }
@@ -1476,10 +1476,10 @@ fn generate_parameterless_handler_dispatch(
         let handler_body = if handler.is_async {
             quote! {
                 let state_ptr: *mut #self_ty = state;
-                hyperware_process_lib::hyperapp::spawn(
+                hyperware_process_lib::hyperapp::spawn(async move {
                     let result = unsafe { (*state_ptr).#fn_name().await };
                     #response_handling
-                )
+                })
                 unsafe { hyperware_process_lib::hyperapp::maybe_save_state(&mut *state); }
             }
         } else {
