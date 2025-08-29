@@ -1080,7 +1080,7 @@ fn generate_async_handler_arm(
                     // Inside the async block, use the pointer to access state
                     let result = unsafe { (*state_ptr).#fn_name().await };
                     #response_handling
-                })
+                });
             }
         }
     } else if func.params.len() == 1 {
@@ -1094,7 +1094,7 @@ fn generate_async_handler_arm(
                     // Inside the async block, use the pointer to access state
                     let result = unsafe { (*state_ptr).#fn_name(param_captured).await };
                     #response_handling
-                })
+                });
             }
         }
     } else {
@@ -1118,7 +1118,7 @@ fn generate_async_handler_arm(
                     // Inside the async block, use the pointer to access state
                     let result = unsafe { (*state_ptr).#fn_name(#(#captured_names),*).await };
                     #response_handling
-                })
+                });
             }
         }
     }
@@ -1185,7 +1185,7 @@ fn init_method_opt_to_call(
             hyperware_process_lib::hyperapp::spawn(async move {
                 // Inside the async block, use the pointer to access state
                 unsafe { (*state_ptr).#method_name().await };
-            })
+            });
         }
     } else {
         quote! {}
@@ -1216,7 +1216,7 @@ fn ws_method_opt_to_call(
                 hyperware_process_lib::hyperapp::spawn(async move {
                     // Inside the async block, use the pointer to access state
                     unsafe { (*state_ptr).#method_name(channel_id, message_type, blob).await };
-                })
+                });
             }
         } else {
             quote! { unsafe { (*state).#method_name(channel_id, message_type, blob) }; }
@@ -1252,7 +1252,7 @@ fn ws_client_method_opt_to_call(
                 hyperware_process_lib::hyperapp::spawn(async move {
                     // Inside the async block, use the pointer to access state
                     unsafe { (*state_ptr).#method_name(channel_id, message_type, blob).await };
-                })
+                });
             }
         } else {
             quote! { unsafe { (*state).#method_name(channel_id, message_type, blob) }; }
@@ -1479,7 +1479,7 @@ fn generate_parameterless_handler_dispatch(
                 hyperware_process_lib::hyperapp::spawn(async move {
                     let result = unsafe { (*state_ptr).#fn_name().await };
                     #response_handling
-                })
+                });
                 unsafe { hyperware_process_lib::hyperapp::maybe_save_state(&mut *state); }
             }
         } else {
