@@ -1616,7 +1616,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyperprocess_macro"
+name = "hyperapp_macro"
 version = "0.1.0"
 dependencies = [
  "hyperware_process_lib",
@@ -1628,7 +1628,7 @@ dependencies = [
 [[package]]
 name = "hyperware_process_lib"
 version = "2.2.0"
-source = "git+https://github.com/hyperware-ai/process_lib?rev=a16d47a#a16d47a2bfae7864e97d70a3914829b4e54a4033"
+source = "git+https://github.com/hyperware-ai/process_lib?rev=b9f1ead#b9f1ead63356bfd4b60b337a380fef1be81d81c6"
 dependencies = [
  "alloy",
  "alloy-primitives",

@@ -2067,7 +2067,7 @@ fn generate_component_impl(
 
 /// The main procedural macro
 #[proc_macro_attribute]
-pub fn hyperprocess(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn hyperapp(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Parse the input
     let attr_args = parse_macro_input!(attr as MetaList);
     let impl_block = parse_macro_input!(item as ItemImpl);
