@@ -2092,20 +2092,11 @@ pub fn hyperprocess(attr: TokenStream, item: TokenStream) -> TokenStream {
     let handlers = HandlerGroups::from_function_metadata(&function_metadata);
 
     // HTTP handlers with parameters will be part of the HPMRequest enum and dispatched via body deserialization.
-    let http_handlers_with_params: Vec<_> = handlers
-        .http
-        .iter()
-        //.filter(|h| !h.params.is_empty())
-        .cloned()
-        .collect();
+    let http_handlers_with_params: Vec<_> = handlers.http.iter().cloned().collect();
 
     // Collect all function metadata that will be represented in the HPMRequest enum.
     // This includes all local and remote handlers, plus HTTP handlers that have parameters.
-    let metadata_for_enum: Vec<_> = function_metadata
-        .iter()
-        //.filter(|f| !f.is_http || !f.params.is_empty())
-        .cloned()
-        .collect();
+    let metadata_for_enum: Vec<_> = function_metadata.iter().cloned().collect();
 
     // Generate HPMRequest and HPMResponse enums from the filtered list of functions
     let (request_enum, response_enum) = generate_request_response_enums(&metadata_for_enum);
