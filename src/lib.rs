@@ -633,11 +633,11 @@ fn validate_request_response_function(method: &syn::ImplItemFn) -> syn::Result<(
 fn analyze_methods(
     impl_block: &ItemImpl,
 ) -> syn::Result<(
-    Option<syn::Ident>,           // init method
-    Option<WsMethodInfo>,         // ws method
-    Option<WsClientMethodInfo>,   // ws_client method
-    Vec<FunctionMetadata>,        // metadata for request/response methods
-    bool,                         // whether init method contains logging init
+    Option<syn::Ident>,         // init method
+    Option<WsMethodInfo>,       // ws method
+    Option<WsClientMethodInfo>, // ws_client method
+    Vec<FunctionMetadata>,      // metadata for request/response methods
+    bool,                       // whether init method contains logging init
 )> {
     let mut init_method = None;
     let mut ws_method = None;
@@ -1076,11 +1076,11 @@ fn generate_async_handler_arm(
             HPMRequest::#variant_name{} => {
                 // Create a raw pointer to state for use in the async block
                 let state_ptr: *mut #self_ty = state;
-                hyperware_process_lib::hyperapp::run_async! {
+                hyperware_process_lib::hyperapp::spawn(async move {
                     // Inside the async block, use the pointer to access state
                     let result = unsafe { (*state_ptr).#fn_name().await };
                     #response_handling
-                }
+                });
             }
         }
     } else if func.params.len() == 1 {
@@ -1090,11 +1090,11 @@ fn generate_async_handler_arm(
                 let param_captured = param;  // Capture param before moving into async block
                 // Create a raw pointer to state for use in the async block
                 let state_ptr: *mut #self_ty = state;
-                hyperware_process_lib::hyperapp::run_async! {
+                hyperware_process_lib::hyperapp::spawn(async move {
                     // Inside the async block, use the pointer to access state
                     let result = unsafe { (*state_ptr).#fn_name(param_captured).await };
                     #response_handling
-                }
+                });
             }
         }
     } else {
@@ -1114,11 +1114,11 @@ fn generate_async_handler_arm(
                 #(#capture_statements)*
                 // Create a raw pointer to state for use in the async block
                 let state_ptr: *mut #self_ty = state;
-                hyperware_process_lib::hyperapp::run_async! {
+                hyperware_process_lib::hyperapp::spawn(async move {
                     // Inside the async block, use the pointer to access state
                     let result = unsafe { (*state_ptr).#fn_name(#(#captured_names),*).await };
                     #response_handling
-                }
+                });
             }
         }
     }
@@ -1182,10 +1182,10 @@ fn init_method_opt_to_call(
         quote! {
             // Create a pointer to state for use in the async block
             let state_ptr: *mut #self_ty = &mut state;
-            hyperware_process_lib::hyperapp::run_async! {
+            hyperware_process_lib::hyperapp::spawn(async move {
                 // Inside the async block, use the pointer to access state
                 unsafe { (*state_ptr).#method_name().await };
-            }
+            });
         }
     } else {
         quote! {}
@@ -1203,17 +1203,20 @@ fn ws_method_opt_to_token(ws_method: &Option<WsMethodInfo>) -> proc_macro2::Toke
 }
 
 /// Convert optional WebSocket method to token stream for method call
-fn ws_method_opt_to_call(ws_method: &Option<WsMethodInfo>, self_ty: &Box<syn::Type>) -> proc_macro2::TokenStream {
+fn ws_method_opt_to_call(
+    ws_method: &Option<WsMethodInfo>,
+    self_ty: &Box<syn::Type>,
+) -> proc_macro2::TokenStream {
     if let Some(method_info) = ws_method {
         let method_name = &method_info.name;
         if method_info.is_async {
             quote! {
                 // Create a raw pointer to state for use in the async block
                 let state_ptr: *mut #self_ty = state;
-                hyperware_process_lib::hyperapp::run_async! {
+                hyperware_process_lib::hyperapp::spawn(async move {
                     // Inside the async block, use the pointer to access state
                     unsafe { (*state_ptr).#method_name(channel_id, message_type, blob).await };
-                }
+                });
             }
         } else {
             quote! { unsafe { (*state).#method_name(channel_id, message_type, blob) }; }
@@ -1236,17 +1239,20 @@ fn ws_client_method_opt_to_token(
 }
 
 /// Convert optional WebSocket client method to token stream for method call
-fn ws_client_method_opt_to_call(ws_client_method: &Option<WsClientMethodInfo>, self_ty: &Box<syn::Type>) -> proc_macro2::TokenStream {
+fn ws_client_method_opt_to_call(
+    ws_client_method: &Option<WsClientMethodInfo>,
+    self_ty: &Box<syn::Type>,
+) -> proc_macro2::TokenStream {
     if let Some(method_info) = ws_client_method {
         let method_name = &method_info.name;
         if method_info.is_async {
             quote! {
                 // Create a raw pointer to state for use in the async block
                 let state_ptr: *mut #self_ty = state;
-                hyperware_process_lib::hyperapp::run_async! {
+                hyperware_process_lib::hyperapp::spawn(async move {
                     // Inside the async block, use the pointer to access state
                     unsafe { (*state_ptr).#method_name(channel_id, message_type, blob).await };
-                }
+                });
             }
         } else {
             quote! { unsafe { (*state).#method_name(channel_id, message_type, blob) }; }
@@ -1470,10 +1476,10 @@ fn generate_parameterless_handler_dispatch(
         let handler_body = if handler.is_async {
             quote! {
                 let state_ptr: *mut #self_ty = state;
-                hyperware_process_lib::hyperapp::run_async! {
+                hyperware_process_lib::hyperapp::spawn(async move {
                     let result = unsafe { (*state_ptr).#fn_name().await };
                     #response_handling
-                }
+                });
                 unsafe { hyperware_process_lib::hyperapp::maybe_save_state(&mut *state); }
             }
         } else {
