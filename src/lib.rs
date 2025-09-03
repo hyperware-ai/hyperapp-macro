@@ -65,7 +65,6 @@ struct HandlerGroups<'a> {
     local: Vec<&'a FunctionMetadata>,
     remote: Vec<&'a FunctionMetadata>,
     http: Vec<&'a FunctionMetadata>,
-    eth: Vec<&'a FunctionMetadata>,
     // New group for combined handlers (used for local messages that can also use remote handlers)
     local_and_remote: Vec<&'a FunctionMetadata>,
 }
@@ -81,8 +80,6 @@ impl<'a> HandlerGroups<'a> {
         // Collect HTTP handlers
         let http: Vec<_> = metadata.iter().filter(|f| f.is_http).collect();
 
-        // Collect ETH handler (there can only be one, but kept this for consistency)
-        let eth: Vec<_> = metadata.iter().filter(|f| f.is_eth).collect();
 
         // Create a combined list of local and remote handlers for local messages
         // We first include all local handlers, then add remote handlers that aren't already covered
@@ -101,7 +98,6 @@ impl<'a> HandlerGroups<'a> {
             local,
             remote,
             http,
-            eth,
             local_and_remote,
         }
     }
@@ -112,7 +108,6 @@ struct HandlerDispatch {
     local: proc_macro2::TokenStream,
     remote: proc_macro2::TokenStream,
     http: proc_macro2::TokenStream,
-    eth: proc_macro2::TokenStream,
     local_and_remote: proc_macro2::TokenStream,
 }
 
@@ -151,6 +146,12 @@ struct WsMethodDetails {
 
 /// WebSocket client method details for code generation
 struct WsClientMethodDetails {
+    identifier: proc_macro2::TokenStream,
+    call: proc_macro2::TokenStream,
+}
+
+/// ETH method details for code generation
+struct EthMethodDetails {
     identifier: proc_macro2::TokenStream,
     call: proc_macro2::TokenStream,
 }
@@ -806,13 +807,10 @@ fn analyze_methods(
                 // Continue with regular processing for function metadata
             }
 
-            // Handle request-response methods
-            if has_http || has_local || has_remote || has_eth {
-                // ETH handlers are already validated above, skip validation for them
-                if !has_eth {
-                    validate_request_response_function(method)?;
-                }
-                let metadata = extract_function_metadata(method, has_local, has_remote, has_http, has_eth);
+            // Handle request-response methods (local, remote, http - NOT eth)
+            if has_http || has_local || has_remote {
+                validate_request_response_function(method)?;
+                let metadata = extract_function_metadata(method, has_local, has_remote, has_http, false);
 
                 // Parameter-less HTTP handlers can optionally specify a path, but it's not required
                 // They can use get_path() and get_method() to handle requests dynamically
@@ -826,7 +824,7 @@ fn analyze_methods(
     if function_metadata.is_empty() {
         return Err(syn::Error::new(
             proc_macro2::Span::call_site(),
-            "You must specify at least one handler with #[remote], #[local], or #[http] attribute. Without any handlers, this hyperprocess wouldn't respond to any requests.",
+            "You must specify at least one handler with #[remote], #[local] or #[http] attribute. Without any handlers, this hyperprocess wouldn't respond to any requests.",
         ));
     }
 
@@ -1354,6 +1352,40 @@ fn ws_client_method_opt_to_call(
             }
         } else {
             quote! { unsafe { (*state).#method_name(channel_id, message_type, blob) }; }
+        }
+    } else {
+        quote! {}
+    }
+}
+
+/// Convert optional ETH method to token stream for identifier
+fn eth_method_opt_to_token(eth_method: &Option<EthMethodInfo>) -> proc_macro2::TokenStream {
+    if let Some(method_info) = eth_method {
+        let method_name = &method_info.name;
+        quote! { Some(stringify!(#method_name)) }
+    } else {
+        quote! { None::<&str> }
+    }
+}
+
+/// Convert optional ETH method to token stream for method call
+fn eth_method_opt_to_call(
+    eth_method: &Option<EthMethodInfo>,
+    self_ty: &Box<syn::Type>,
+) -> proc_macro2::TokenStream {
+    if let Some(method_info) = eth_method {
+        let method_name = &method_info.name;
+        if method_info.is_async {
+            quote! {
+                // Create a raw pointer to state for use in the async block
+                let state_ptr: *mut #self_ty = state;
+                hyperware_process_lib::hyperapp::spawn(async move {
+                    // Inside the async block, use the pointer to access state
+                    unsafe { (*state_ptr).#method_name(eth_sub_result).await };
+                });
+            }
+        } else {
+            quote! { unsafe { (*state).#method_name(eth_sub_result) }; }
         }
     } else {
         quote! {}
@@ -1897,13 +1929,12 @@ fn generate_message_handlers(
     handler_arms: &HandlerDispatch,
     ws_method_call: &proc_macro2::TokenStream,
     ws_client_method_call: &proc_macro2::TokenStream,
+    eth_method_call: &proc_macro2::TokenStream,
     http_handlers: &[&FunctionMetadata],
-    eth_handlers: &[&FunctionMetadata],
 ) -> proc_macro2::TokenStream {
     let http_request_match_arms = &handler_arms.http;
     let local_and_remote_request_match_arms = &handler_arms.local_and_remote;
     let remote_request_match_arms = &handler_arms.remote;
-    let eth_request_match_arms = &handler_arms.eth;
 
     let http_context_setup = generate_http_context_setup();
     let http_request_parsing = generate_http_request_parsing();
@@ -1917,7 +1948,7 @@ fn generate_message_handlers(
     let remote_message_handler =
         generate_remote_message_handler(self_ty, remote_request_match_arms);
     let eth_message_handler =
-        generate_eth_message_handler(self_ty, eth_request_match_arms);
+        generate_eth_message_handler(self_ty, eth_method_call);
 
     quote! {
         /// Handle WebSocket client messages
@@ -1963,28 +1994,31 @@ fn generate_message_handlers(
 /// Generate ETH message handler
 fn generate_eth_message_handler(
     self_ty: &Box<syn::Type>,
-    match_arms: &proc_macro2::TokenStream,
+    eth_method_call: &proc_macro2::TokenStream,
 ) -> proc_macro2::TokenStream {
     quote! {
         /// Handle ETH messages
         fn handle_eth_message(state: *mut #self_ty, message: hyperware_process_lib::Message) {
             hyperware_process_lib::logging::debug!("Processing ETH message from: {:?}", message.source());
-            match serde_json::from_slice::<HPMRequest>(message.body()) {
-                Ok(request) => {
+            
+            // ETH messages contain EthSubResult directly, not wrapped in HPMRequest
+            match serde_json::from_slice::<EthSubResult>(message.body()) {
+                Ok(eth_sub_result) => {
+                    hyperware_process_lib::logging::debug!("Successfully parsed EthSubResult, calling ETH handler");
+                    #eth_method_call
                     unsafe {
-                        #match_arms
                         hyperware_process_lib::hyperapp::maybe_save_state(&mut *state);
                     }
                 },
                 Err(e) => {
                     let raw_body = String::from_utf8_lossy(message.body());
                     hyperware_process_lib::logging::error!(
-                        "Failed to deserialize ETH request into HPMRequest enum.\n\
+                        "Failed to deserialize ETH message into EthSubResult.\n\
                         Error: {}\n\
                         Source: {:?}\n\
                         Body: {}\n\
                         \n\
-                        💡 This usually means the message format doesn't match any of your #[eth] handlers.",
+                        💡 This usually means the message format from eth:distro:sys doesn't match EthSubResult.",
                         e, message.source(), raw_body
                     );
                 }
@@ -2013,10 +2047,10 @@ fn generate_component_impl(
     init_method_details: &InitMethodDetails,
     ws_method_details: &WsMethodDetails,
     ws_client_method_details: &WsClientMethodDetails,
+    eth_method_details: &EthMethodDetails,
     handler_arms: &HandlerDispatch,
     has_init_logging: bool,
     http_handlers: &[&FunctionMetadata],
-    eth_handlers: &[&FunctionMetadata],
 ) -> proc_macro2::TokenStream {
     // Extract values from args for use in the quote macro
     let name = &args.name;
@@ -2049,6 +2083,7 @@ fn generate_component_impl(
     let init_method_call = &init_method_details.call;
     let ws_method_call = &ws_method_details.call;
     let ws_client_method_call = &ws_client_method_details.call;
+    let eth_method_call = &eth_method_details.call;
 
     // Generate message handler functions
     let message_handlers = generate_message_handlers(
@@ -2056,8 +2091,8 @@ fn generate_component_impl(
         handler_arms,
         ws_method_call,
         ws_client_method_call,
+        eth_method_call,
         http_handlers,
-        eth_handlers,
     );
 
     // Generate the logging initialization conditionally
@@ -2253,7 +2288,6 @@ pub fn hyperprocess(attr: TokenStream, item: TokenStream) -> TokenStream {
             self_ty,
             HandlerType::Local,
         ),
-        eth: generate_handler_dispatch(&handlers.eth, self_ty, HandlerType::Eth),
     };
 
     // Clean the implementation block
@@ -2277,7 +2311,11 @@ pub fn hyperprocess(attr: TokenStream, item: TokenStream) -> TokenStream {
         call: ws_client_method_opt_to_call(&ws_client_method, self_ty),
     };
 
-
+    // Prepare ETH method details for code generation
+    let eth_method_details = EthMethodDetails {
+        identifier: eth_method_opt_to_token(&eth_method),
+        call: eth_method_opt_to_call(&eth_method, self_ty),
+    };
 
     // Generate the final output
     generate_component_impl(
@@ -2289,10 +2327,10 @@ pub fn hyperprocess(attr: TokenStream, item: TokenStream) -> TokenStream {
         &init_method_details,
         &ws_method_details,
         &ws_client_method_details,
+        &eth_method_details,
         &handler_arms,
         has_init_logging,
         &handlers.http,
-        &handlers.eth,
     )
     .into()
 }
