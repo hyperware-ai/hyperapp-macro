@@ -2233,8 +2233,7 @@ pub fn hyperprocess(attr: TokenStream, item: TokenStream) -> TokenStream {
         call: ws_client_method_opt_to_call(&ws_client_method, self_ty),
     };
 
-    // Note: ETH handlers don't need special method details like WebSocket handlers
-    // They work through the standard request-response dispatch system
+
 
     // Generate the final output
     generate_component_impl(
