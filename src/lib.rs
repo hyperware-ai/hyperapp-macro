@@ -641,6 +641,47 @@ fn validate_request_response_function(method: &syn::ImplItemFn) -> syn::Result<(
     Ok(())
 }
 
+/// Validate the ETH handler signature
+fn validate_eth_handler(method: &syn::ImplItemFn) -> syn::Result<()> {
+    // Ensure first param is &mut self
+    if !has_valid_self_receiver(method) {
+        return Err(syn::Error::new_spanned(
+            &method.sig,
+            "ETH handler must take &mut self as first parameter",
+        ));
+    }
+
+    // Ensure there are exactly 2 parameters (&mut self + eth_sub_result)
+    if method.sig.inputs.len() != 2 {
+        return Err(syn::Error::new_spanned(
+            &method.sig,
+            "ETH handler must take exactly one parameter: eth_sub_result: EthSubResult",
+        ));
+    }
+
+    // Get the second parameter (the eth_sub_result parameter)
+    let params: Vec<_> = method.sig.inputs.iter().skip(1).collect();
+    let eth_param = &params[0];
+
+    if let syn::FnArg::Typed(pat_type) = eth_param {
+        let type_str = pat_type.ty.to_token_stream().to_string();
+        if !type_str.contains("EthSubResult") {
+            return Err(syn::Error::new_spanned(
+                pat_type,
+                "ETH handler parameter must be eth_sub_result: EthSubResult",
+            ));
+        }
+    } else {
+        return Err(syn::Error::new_spanned(
+            eth_param,
+            "ETH handler parameter must be eth_sub_result: EthSubResult",
+        ));
+    }
+
+    // Any return type is allowed
+    Ok(())
+}
+
 //------------------------------------------------------------------------------
 // Method Analysis Functions
 //------------------------------------------------------------------------------
@@ -751,7 +792,7 @@ fn analyze_methods(
                         "#[eth] cannot be combined with other attributes",
                     ));
                 }
-                validate_request_response_function(method)?;
+                validate_eth_handler(method)?;
                 if eth_method.is_some() {
                     return Err(syn::Error::new_spanned(
                         method,
@@ -767,7 +808,10 @@ fn analyze_methods(
 
             // Handle request-response methods
             if has_http || has_local || has_remote || has_eth {
-                validate_request_response_function(method)?;
+                // ETH handlers are already validated above, skip validation for them
+                if !has_eth {
+                    validate_request_response_function(method)?;
+                }
                 let metadata = extract_function_metadata(method, has_local, has_remote, has_http, has_eth);
 
                 // Parameter-less HTTP handlers can optionally specify a path, but it's not required
