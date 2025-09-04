@@ -198,14 +198,44 @@ Example:
     - this one will not await the response or print it out
 ```
 
-For terminal handlers, the JSON body should match the generated request enum variant. For example, if you have a terminal handler named `handle_terminal_command` that takes a `String` parameter:
+For terminal handlers, the JSON body should match the generated request enum variant. Here's a complete example:
 
+**Handler Implementation:**
+```rust
+#[terminal]
+fn handle_terminal_command(&mut self, command: String) -> String {
+    match command.as_str() {
+        "status" => format!("Counter: {}", self.counter),
+        "reset" => {
+            self.counter = 0;
+            "Counter reset".to_string()
+        },
+        "increment" => {
+            self.counter += 1;
+            format!("Counter incremented to: {}", self.counter)
+        },
+        "help" => "Available commands: status, reset, increment, help".to_string(),
+        _ => "Unknown command. Type 'help' for available commands.".to_string()
+    }
+}
+```
+
+**Messaging the Terminal Handler:**
 ```bash
-# Send a command and await the response
+# Get current status and await response
 m -a 5 our@my-process:my-package:my-publisher.os '{"HandleTerminalCommand": "status"}'
 
-# Send a command without waiting for response
-m our@my-process:my-package:my-publisher.os '{"HandleTerminalCommand": "reset"}'
+# Reset the counter and await response
+m -a 5 our@my-process:my-package:my-publisher.os '{"HandleTerminalCommand": "reset"}'
+
+# Increment counter without waiting for response
+m our@my-process:my-package:my-publisher.os '{"HandleTerminalCommand": "increment"}'
+
+# Get help
+m -a 5 our@my-process:my-package:my-publisher.os '{"HandleTerminalCommand": "help"}'
+```
+
+
 ```
 
 The function arguments and the return values _have_ to be serializable with `Serde`.
@@ -1659,12 +1689,11 @@ graph TB
                 MsgRouter -->|"HTTP"| HttpHandler["HTTP Handlers"]
                 MsgRouter -->|"Local"| LocalHandler["Local Handlers"]
                 MsgRouter -->|"Remote"| RemoteHandler["Remote Handlers"]
-                MsgRouter -->|"Terminal"| TerminalHandler["Terminal Handlers"]
                 MsgRouter -->|"WebSocket"| WsHandler["WebSocket Handlers"]
                 MsgRouter -->|"Response"| RespHandler["Response Handler"]
 
                 %% State management
-                HttpHandler & LocalHandler & RemoteHandler & TerminalHandler & WsHandler --> AppState[("Application State
+                HttpHandler & LocalHandler & RemoteHandler & WsHandler --> AppState[("Application State
                 SaveOptions::EveryMessage")]
 
                 %% Async handling
@@ -1731,7 +1760,7 @@ graph TB
     %% Style elements
     class UserSrc,WitFiles,CallerUtils,EnumStructs,ReqResEnums,HandlerDisp,AsyncRuntime,MainLoop,WasmComp mainflow
     class MsgLoop,Executor,RespRegistry,RespHandler,AF2,AF8 accent
-    class MsgRouter,HttpHandler,LocalHandler,RemoteHandler,TerminalHandler,WsHandler,CallStub,AppState dataflow
+    class MsgRouter,HttpHandler,LocalHandler,RemoteHandler,WsHandler,CallStub,AppState dataflow
     class AF1,AF3,AF4,AF5,AF6,AF7,AF9 asyncflow
     class ExtClient1,ExtClient2,Process2,Storage,InMsg,OutMsg external
     class CorrelationNote annotation
