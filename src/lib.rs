@@ -691,6 +691,27 @@ fn validate_eth_handler(method: &syn::ImplItemFn) -> syn::Result<()> {
     Ok(())
 }
 
+/// Validate the terminal handler signature
+fn validate_terminal_handler(method: &syn::ImplItemFn) -> syn::Result<()> {
+    // Ensure first param is &mut self
+    if !has_valid_self_receiver(method) {
+        return Err(syn::Error::new_spanned(
+            &method.sig,
+            "Terminal handler must take &mut self as their first parameter",
+        ));
+    }
+
+    // Validate return type (must be unit)
+    if !matches!(method.sig.output, ReturnType::Default) {
+        return Err(syn::Error::new_spanned(
+            &method.sig.output,
+            "Terminal handlers must not return a value. Use kiprintln!() for output instead of return values.",
+        ));
+    }
+
+    Ok(())
+}
+
 //------------------------------------------------------------------------------
 // Method Analysis Functions
 //------------------------------------------------------------------------------
@@ -818,6 +839,10 @@ fn analyze_methods(
 
             // Handle request-response methods (local, remote, http, terminal - NOT eth)
             if has_http || has_local || has_remote || has_terminal {
+                // Validate terminal handlers specifically
+                if has_terminal {
+                    validate_terminal_handler(method)?;
+                }
                 validate_request_response_function(method)?;
                 let metadata = extract_function_metadata(method, has_local, has_remote, has_http, has_terminal, false);
 
