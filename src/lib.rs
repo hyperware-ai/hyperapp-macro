@@ -68,7 +68,6 @@ struct HandlerGroups<'a> {
     remote: Vec<&'a FunctionMetadata>,
     http: Vec<&'a FunctionMetadata>,
     terminal: Vec<&'a FunctionMetadata>,
-    eth: Vec<&'a FunctionMetadata>,
     // New group for combined handlers (used for local messages that can also use remote handlers)
     local_and_remote: Vec<&'a FunctionMetadata>,
 }
@@ -86,9 +85,6 @@ impl<'a> HandlerGroups<'a> {
 
         // Collect terminal handlers
         let terminal: Vec<_> = metadata.iter().filter(|f| f.is_terminal).collect();
-
-        // Collect ETH handlers
-        let eth: Vec<_> = metadata.iter().filter(|f| f.is_eth).collect();
 
         // Create a combined list of local and remote handlers for local messages
         // We first include all local handlers, then add remote handlers that aren't already covered
@@ -108,7 +104,6 @@ impl<'a> HandlerGroups<'a> {
             remote,
             http,
             terminal,
-            eth,
             local_and_remote,
         }
     }
@@ -120,7 +115,6 @@ struct HandlerDispatch {
     remote: proc_macro2::TokenStream,
     http: proc_macro2::TokenStream,
     terminal: proc_macro2::TokenStream,
-    eth: proc_macro2::TokenStream,
     local_and_remote: proc_macro2::TokenStream,
 }
 
@@ -2348,7 +2342,6 @@ pub fn hyperprocess(attr: TokenStream, item: TokenStream) -> TokenStream {
         // HTTP dispatch arms are only generated for handlers with parameters.
         http: generate_handler_dispatch(&http_handlers_with_params, self_ty, HandlerType::Http),
         terminal: generate_handler_dispatch(&handlers.terminal, self_ty, HandlerType::Terminal),
-        eth: generate_handler_dispatch(&handlers.eth, self_ty, HandlerType::Eth),
         // Generate dispatch for combined local and remote handlers
         local_and_remote: generate_handler_dispatch(
             &handlers.local_and_remote,
