@@ -135,13 +135,14 @@ Example:
 
 ### Handler Types
 
-Hyperware processes can handle three types of requests, specified by attributes:
+Hyperware processes can handle four types of requests, specified by attributes:
 
 | Attribute | Description |
 |-----------|-------------|
 | `#[local]` | Handles local (same-node) requests |
 | `#[remote]` | Handles remote (cross-node) requests |
 | `#[http]` | Handles ALL HTTP requests (GET, POST, PUT, DELETE, etc.) |
+| `#[eth]` | Handles Ethereum subscription updates from your RPC provider |
 
 These attributes can be combined to make a handler respond to multiple request types:
 
@@ -366,7 +367,9 @@ impl MyApp {
 - All handler names must be unique when converted to CamelCase (e.g., `get_user` and `get_user` conflict)
 - Init methods must be async and take only `&mut self`
 - WebSocket methods must have exactly 3 parameters: `channel_id: u32`, `message_type: WsMessageType`, `blob: LazyLoadBlob`
-- At least one handler must be defined (`#[http]`, `#[local]`, or `#[remote]`)
+- ETH handlers must take exactly 1 parameter: `eth_sub_result: EthSubResult`
+- Only one ETH handler is allowed per hyperprocess
+- At least one handler must be defined (`#[http]`, `#[local]`, `#[remote]`, or `#[eth]`)
 - The macro provides comprehensive error messages with debugging tips for all validation failures
 
 **Current Limitations**:
@@ -446,6 +449,79 @@ async fn handle_ws_client_async(&mut self, channel_id: u32, message_type: WsMess
 
 Both sync and async variants are supported. This handler receives messages from WebSocket servers that your process has connected to using the `http-client:distro:sys` service.
 The signature matches that of `#[ws]` for consistency.
+
+#### ETH Handler
+
+For handling Ethereum subscription updates from the `eth:distro:sys` service, use:
+
+```rust
+// Synchronous ETH handler with resubscription
+#[eth]
+fn handle_eth(&mut self, eth_sub_result: EthSubResult) -> String {
+    match eth_sub_result {
+        Ok(eth_sub) => {
+            // Handle successful subscription update
+            println!("Got ETH subscription update: id={}, result={:?}", 
+                eth_sub.id, eth_sub.result);
+            "Subscription update processed".to_string()
+        }
+        Err(eth_sub_error) => {
+            // Handle subscription error with resubscription
+            println!("ETH subscription error: id={}, error={}", 
+                eth_sub_error.id, eth_sub_error.error);
+            
+            // Clean up existing subscription and resubscribe
+            let _ = self.hypermap.provider.unsubscribe(1);
+            self.hypermap.provider.subscribe_loop(
+                1,
+                make_filter(&self.hypermap, None),
+                0,
+                0,
+            );
+            
+            "ETH subscription error resolved, subscription reinstated".to_string()
+        }
+    }
+}
+
+// Asynchronous ETH handler with resubscription
+#[eth]
+async fn handle_eth_async(&mut self, eth_sub_result: EthSubResult) -> String {
+    match eth_sub_result {
+        Ok(eth_sub) => {
+            // Process subscription update asynchronously
+            let processed = self.process_eth_event(&eth_sub).await;
+            format!("Processed ETH event: {}", processed)
+        }
+        Err(eth_sub_error) => {
+            // Handle error asynchronously with resubscription
+            self.log_eth_error(&eth_sub_error).await;
+            
+            // Clean up existing subscription and resubscribe
+            let _ = self.hypermap.provider.unsubscribe(1);
+            self.hypermap.provider.subscribe_loop(
+                1, 
+                make_filter(&self.hypermap, None),
+                0,
+                0,
+            );
+            
+            "ETH subscription error resolved, subscription reinstated".to_string()
+        }
+    }
+}
+```
+
+**Important Notes:**
+- Only **one** ETH handler is allowed per hyperprocess
+- The handler **must** take exactly one parameter: `eth_sub_result: EthSubResult`
+- Both sync and async variants are supported
+- The handler receives subscription updates and errors from the ETH module
+- `EthSubResult` is a `Result<EthSub, EthSubError>` type where:
+  - `EthSub` contains subscription updates with `id: u64` and `result: serde_json::Value`
+  - `EthSubError` contains subscription errors with `id: u64` and `error: String`
+- **Resubscription Pattern**: Always unsubscribe first, then resubscribe with current state
+
 
 ### Binding Endpoints
 
