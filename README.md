@@ -455,7 +455,7 @@ The signature matches that of `#[ws]` for consistency.
 For handling Ethereum subscription updates from the `eth:distro:sys` service, use:
 
 ```rust
-// Synchronous ETH handler
+// Synchronous ETH handler with resubscription
 #[eth]
 fn handle_eth(&mut self, eth_sub_result: EthSubResult) -> String {
     match eth_sub_result {
@@ -466,23 +466,25 @@ fn handle_eth(&mut self, eth_sub_result: EthSubResult) -> String {
             "Subscription update processed".to_string()
         }
         Err(eth_sub_error) => {
-            // Handle subscription error
+            // Handle subscription error with resubscription
             println!("ETH subscription error: id={}, error={}", 
                 eth_sub_error.id, eth_sub_error.error);
-
+            
+            // Clean up existing subscription and resubscribe
+            let _ = self.hypermap.provider.unsubscribe(1);
             self.hypermap.provider.subscribe_loop(
-                    1,
-                    make_filter(&state.hypermap, None),
-                    0,
-                    0,
-                );
-
+                1,
+                make_filter(&self.hypermap, None),
+                0,
+                0,
+            );
+            
             "ETH subscription error resolved, subscription reinstated".to_string()
         }
     }
 }
 
-// Asynchronous ETH handler
+// Asynchronous ETH handler with resubscription
 #[eth]
 async fn handle_eth_async(&mut self, eth_sub_result: EthSubResult) -> String {
     match eth_sub_result {
@@ -492,16 +494,18 @@ async fn handle_eth_async(&mut self, eth_sub_result: EthSubResult) -> String {
             format!("Processed ETH event: {}", processed)
         }
         Err(eth_sub_error) => {
-            // Handle error asynchronously
+            // Handle error asynchronously with resubscription
             self.log_eth_error(&eth_sub_error).await;
             
+            // Clean up existing subscription and resubscribe
+            let _ = self.hypermap.provider.unsubscribe(1);
             self.hypermap.provider.subscribe_loop(
-                    1, 
-                    make_filter(&state.hypermap, None),
-                    0,
-                    0,
-                );
-
+                1, 
+                make_filter(&self.hypermap, None),
+                0,
+                0,
+            );
+            
             "ETH subscription error resolved, subscription reinstated".to_string()
         }
     }
@@ -516,6 +520,8 @@ async fn handle_eth_async(&mut self, eth_sub_result: EthSubResult) -> String {
 - `EthSubResult` is a `Result<EthSub, EthSubError>` type where:
   - `EthSub` contains subscription updates with `id: u64` and `result: serde_json::Value`
   - `EthSubError` contains subscription errors with `id: u64` and `error: String`
+- **Resubscription Pattern**: Always unsubscribe first, then resubscribe with current state
+
 
 ### Binding Endpoints
 
