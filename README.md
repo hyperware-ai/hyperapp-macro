@@ -141,7 +141,7 @@ Hyperware processes can handle four types of requests, specified by attributes:
 |-----------|-------------|
 | `#[local]` | Handles local (same-node) requests |
 | `#[remote]` | Handles remote (cross-node) requests |
-| `#[http]` | Handles HTTP requests to your process endpoints (GET, POST, PUT, DELETE, etc.)  |
+| `#[http]` | Handles ALL HTTP requests (GET, POST, PUT, DELETE, etc.)  |
 | `#[terminal]` | Handles terminal requests from the system terminal |
 | `#[eth]` | Handles Ethereum subscription updates from your RPC provider |
 
