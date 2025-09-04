@@ -14,6 +14,7 @@ How it feels to use hyperware
   - [Special Methods](#special-methods)
     - [Init Method](#init-method)
     - [WebSocket Handler](#websocket-handler)
+  - [Background Tasks and Periodic Jobs](#background-tasks-and-periodic-jobs)
   - [Binding Endpoints](#binding-endpoints)
     - [HTTP Binding Configuration](#http-binding-configuration)
     - [WebSocket Binding Configuration](#websocket-binding-configuration)
@@ -446,6 +447,261 @@ async fn handle_ws_client_async(&mut self, channel_id: u32, message_type: WsMess
 
 Both sync and async variants are supported. This handler receives messages from WebSocket servers that your process has connected to using the `http-client:distro:sys` service.
 The signature matches that of `#[ws]` for consistency.
+
+### Background Tasks and Periodic Jobs
+
+You can set up periodic background tasks (cron-like jobs) that run independently of incoming requests. This is useful for maintenance tasks, periodic data fetching, log monitoring, or any recurring operations.
+
+#### Setting Up Periodic Tasks
+
+Background tasks are typically started from the `#[init]` method and run concurrently with your main request handling:
+
+```rust
+#[derive(Default, Debug, Serialize, Deserialize)]
+struct MyProcessState {
+    last_check: Option<SystemTime>,
+    alert_count: u64,
+}
+
+#[hyperprocess(
+    name = "Background Monitor",
+    ui = Some(HttpBindingConfig::default()),
+    endpoints = vec![
+        Binding::Http {
+            path: "/api",
+            config: HttpBindingConfig::new(false, false, false, None),
+        }
+    ],
+    save_config = SaveOptions::EveryMessage,
+    wit_world = "background-monitor-dot-os-v0"
+)]
+impl MyProcessState {
+    #[init]
+    async fn initialize(&mut self) {
+        // Start background monitoring tasks during initialization
+        self.start_background_tasks().await;
+        
+        kiprintln!("Process initialized with background tasks");
+    }
+    
+    // Regular HTTP handlers can still be defined
+    #[http(method = "GET", path = "/health")]
+    fn health_check(&mut self) -> String {
+        format!("Healthy - Alert count: {}", self.alert_count)
+    }
+    
+    #[http(method = "GET", path = "/stats")]
+    fn get_stats(&mut self) -> String {
+        let last_check = self.last_check
+            .map(|t| format!("{:?}", t))
+            .unwrap_or_else(|| "Never".to_string());
+        
+        format!("Last check: {}, Alerts: {}", last_check, self.alert_count)
+    }
+}
+
+// Because these are services (and not handlers) on the state, they must be in a separate impl block
+impl MyProcessState {
+    // Start periodic background tasks
+    async fn start_background_tasks(&self) {
+        // Clone any state needed by background tasks
+        let alert_count = self.alert_count;
+        
+        // Spawn periodic log checking task (every 15 seconds)
+        spawn(async move {
+            loop {
+                let _ = sleep(15000).await; // 15 seconds
+                
+                kiprintln!("Running periodic log check...");
+                
+                // Check logs without modifying persistent state
+                // The log checking will still generate alerts via Discord webhooks
+                match Self::check_logs_and_alert().await {
+                    Ok(result) => {
+                        kiprintln!("Log check completed: {}", result);
+                    }
+                    Err(e) => {
+                        kiprintln!("Log check failed: {}", e);
+                    }
+                }
+            }
+        });
+        
+        // Spawn data cleanup task (every 5 minutes)
+        spawn(async move {
+            loop {
+                let _ = sleep(300000).await; // 5 minutes
+                
+                kiprintln!("Running periodic cleanup...");
+                
+                // Example: Clean up old temporary files, clear caches, etc.
+                match Self::cleanup_old_data().await {
+                    Ok(_) => kiprintln!("Cleanup completed successfully"),
+                    Err(e) => kiprintln!("Cleanup failed: {}", e),
+                }
+            }
+        });
+        
+        kiprintln!("Background tasks spawned successfully");
+    }
+    
+    /// Implementation of log checking logic
+    async fn check_logs_and_alert() -> Result<String, String> {
+        // Your log checking implementation here
+        // This might read log files, call external APIs, etc.
+        
+        // Example: Read system logs and check for errors
+        // let logs = read_system_logs().await?;
+        // if logs.contains("ERROR") {
+        //     send_discord_alert("Error detected in logs").await?;
+        // }
+        
+        Ok("Log check completed".to_string())
+    }
+    
+    /// Implementation of cleanup logic
+    async fn cleanup_old_data() -> Result<(), String> {
+        // Your cleanup implementation here
+        // This might clean temporary files, rotate logs, etc.
+        
+        Ok(())
+    }
+}
+```
+
+#### Key Patterns for Background Tasks
+
+**Primary Pattern: Closure-Based Tasks with Captured State**
+The most flexible and commonly used approach is `async move` closures that capture variables from the current scope:
+
+```rust
+async fn start_background_tasks(&self) {
+    // Clone shared state that the background task needs
+    let delivery_queue = self.delivery_queue.clone();
+    let app_config = self.config.clone();
+    
+    // Spawn a task with captured variables
+    spawn(async move {
+        loop {
+            let _ = sleep(30000).await; // 30 seconds
+            
+            // Access the captured variables
+            let queue_snapshot = {
+                let queue = delivery_queue.lock().unwrap();
+                queue.clone()
+            };
+            
+            // Process the queue...
+            for (node, messages) in queue_snapshot {
+                // Delivery logic using captured state
+                Self::process_delivery(node, messages, &app_config).await;
+            }
+        }
+    });
+}
+```
+
+This pattern is particularly useful when you need to:
+- Access shared state (like `Arc<Mutex<T>>` or `Arc<RwLock<T>>`)
+- Use configuration values from the init context
+- Maintain references to external resources
+
+**Alternative Pattern: Static Methods (Less Common)**
+For completely independent tasks that don't need any state or context:
+
+```rust
+async fn start_background_tasks(&self) {
+    // Use static methods for purely independent tasks
+    spawn(Self::periodic_health_ping());
+}
+
+// Static async method - completely independent
+async fn periodic_health_ping() {
+    loop {
+        let _ = sleep(60000).await; // 1 minute
+        
+        // Example: Ping an external health check service
+        Self::ping_external_service().await;
+    }
+}
+```
+
+**Communication with External Services**
+Background tasks are perfect for calling external APIs or services:
+
+```rust
+async fn periodic_api_sync() {
+    loop {
+        let _ = sleep(60000).await; // 1 minute
+        
+        match Self::fetch_external_data().await {
+            Ok(data) => {
+                // Process the data or send it somewhere
+                Self::process_external_data(data).await;
+            }
+            Err(e) => {
+                kiprintln!("Failed to fetch external data: {}", e);
+            }
+        }
+    }
+}
+
+async fn fetch_external_data() -> Result<Vec<String>, String> {
+    // Make HTTP requests to external APIs
+    // Use the send() function for calling other processes
+    Ok(vec!["data1".to_string(), "data2".to_string()])
+}
+```
+
+**3. Different Time Intervals**
+You can set up multiple tasks with different frequencies:
+
+```rust
+async fn start_background_tasks(&self) {
+    // Fast monitoring (every 10 seconds)
+    spawn(Self::health_monitor());
+    
+    // Medium frequency (every 5 minutes)  
+    spawn(Self::data_sync());
+    
+    // Slow maintenance (every hour)
+    spawn(Self::cleanup_task());
+}
+
+async fn health_monitor() {
+    loop {
+        let _ = sleep(10000).await; // 10 seconds
+        // Quick health checks
+    }
+}
+
+async fn data_sync() {
+    loop {
+        let _ = sleep(300000).await; // 5 minutes  
+        // Sync data with external systems
+    }
+}
+
+async fn cleanup_task() {
+    loop {
+        let _ = sleep(3600000).await; // 1 hour
+        // Heavy maintenance operations
+    }
+}
+```
+
+#### Important Notes
+
+- **Independent Execution**: Background tasks run independently of your main request/response cycle
+- **State Access Patterns**: 
+  - **Primary**: `async move` closures for tasks that need captured variables or shared state
+  - **Alternative**: Static methods (`Self::method()`) for purely independent tasks
+- **Error Handling**: Always include proper error handling in background tasks to prevent crashes
+- **Sleep Intervals**: Use `sleep(milliseconds)` to control task frequency
+- **Spawning**: Always call `spawn()` from an async context (like the `#[init]` method)
+- **Shared State**: Use `Arc<Mutex<T>>` or `Arc<RwLock<T>>` when background tasks need to share mutable state
+
+This pattern allows you to build processes that can handle both real-time requests and perform ongoing background maintenance, making them more robust and self-sufficient.
 
 ### Binding Endpoints
 
