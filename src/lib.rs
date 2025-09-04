@@ -46,6 +46,7 @@ struct FunctionMetadata {
     is_local: bool,                 // Has #[local] attribute
     is_remote: bool,                // Has #[remote] attribute
     is_http: bool,                  // Has #[http] attribute
+    is_terminal: bool,              // Has #[terminal] attribute
     is_eth: bool,                   // Has #[eth] attribute
     http_methods: Vec<String>,      // HTTP methods this handler accepts (GET, POST, etc.)
     http_path: Option<String>,      // Specific path this handler is bound to (optional)
@@ -57,6 +58,7 @@ enum HandlerType {
     Local,
     Remote,
     Http,
+    Terminal,
     Eth,
 }
 
@@ -65,6 +67,7 @@ struct HandlerGroups<'a> {
     local: Vec<&'a FunctionMetadata>,
     remote: Vec<&'a FunctionMetadata>,
     http: Vec<&'a FunctionMetadata>,
+    terminal: Vec<&'a FunctionMetadata>,
     // New group for combined handlers (used for local messages that can also use remote handlers)
     local_and_remote: Vec<&'a FunctionMetadata>,
 }
@@ -80,6 +83,8 @@ impl<'a> HandlerGroups<'a> {
         // Collect HTTP handlers
         let http: Vec<_> = metadata.iter().filter(|f| f.is_http).collect();
 
+        // Collect terminal handlers
+        let terminal: Vec<_> = metadata.iter().filter(|f| f.is_terminal).collect();
 
         // Create a combined list of local and remote handlers for local messages
         // We first include all local handlers, then add remote handlers that aren't already covered
@@ -98,6 +103,7 @@ impl<'a> HandlerGroups<'a> {
             local,
             remote,
             http,
+            terminal,
             local_and_remote,
         }
     }
@@ -108,6 +114,7 @@ struct HandlerDispatch {
     local: proc_macro2::TokenStream,
     remote: proc_macro2::TokenStream,
     http: proc_macro2::TokenStream,
+    terminal: proc_macro2::TokenStream,
     local_and_remote: proc_macro2::TokenStream,
 }
 
@@ -370,6 +377,7 @@ fn clean_impl_block(impl_block: &ItemImpl) -> ItemImpl {
                     && !attr.path().is_ident("local")
                     && !attr.path().is_ident("remote")
                     && !attr.path().is_ident("eth")
+                    && !attr.path().is_ident("terminal")
                     && !attr.path().is_ident("ws")
                     && !attr.path().is_ident("ws_client")
             });
@@ -683,6 +691,27 @@ fn validate_eth_handler(method: &syn::ImplItemFn) -> syn::Result<()> {
     Ok(())
 }
 
+/// Validate the terminal handler signature
+fn validate_terminal_handler(method: &syn::ImplItemFn) -> syn::Result<()> {
+    // Ensure first param is &mut self
+    if !has_valid_self_receiver(method) {
+        return Err(syn::Error::new_spanned(
+            &method.sig,
+            "Terminal handler must take &mut self as their first parameter",
+        ));
+    }
+
+    // Validate return type (must be unit)
+    if !matches!(method.sig.output, ReturnType::Default) {
+        return Err(syn::Error::new_spanned(
+            &method.sig.output,
+            "Terminal handlers must not return a value. Use kiprintln!() for output instead of return values.",
+        ));
+    }
+
+    Ok(())
+}
+
 //------------------------------------------------------------------------------
 // Method Analysis Functions
 //------------------------------------------------------------------------------
@@ -716,11 +745,12 @@ fn analyze_methods(
             let has_remote = has_attribute(method, "remote");
             let has_eth = has_attribute(method, "eth");
             let has_ws = has_attribute(method, "ws");
+            let has_terminal = has_attribute(method, "terminal");
             let has_ws_client = has_attribute(method, "ws_client");
 
             // Handle init method
             if has_init {
-                if has_http || has_local || has_remote || has_eth || has_ws || has_ws_client {
+                if has_http || has_local || has_remote || has_eth || has_ws || has_ws_client || has_terminal {
                     return Err(syn::Error::new_spanned(
                         method,
                         "#[init] cannot be combined with other attributes",
@@ -743,7 +773,7 @@ fn analyze_methods(
 
             // Handle WebSocket method
             if has_ws {
-                if has_http || has_local || has_remote || has_eth || has_init || has_ws_client {
+                if has_http || has_local || has_remote || has_eth || has_init || has_ws_client || has_terminal {
                     return Err(syn::Error::new_spanned(
                         method,
                         "#[ws] cannot be combined with other attributes",
@@ -765,7 +795,7 @@ fn analyze_methods(
 
             // Handle WebSocket client method
             if has_ws_client {
-                if has_http || has_local || has_remote || has_eth || has_init || has_ws {
+                if has_http || has_local || has_remote || has_eth || has_init || has_ws || has_terminal {
                     return Err(syn::Error::new_spanned(
                         method,
                         "#[ws_client] cannot be combined with other attributes",
@@ -787,7 +817,7 @@ fn analyze_methods(
 
             // Handle ETH method
             if has_eth {
-                if has_http || has_local || has_remote || has_init || has_ws || has_ws_client {
+                if has_http || has_local || has_remote || has_init || has_ws || has_ws_client || has_terminal {
                     return Err(syn::Error::new_spanned(
                         method,
                         "#[eth] cannot be combined with other attributes",
@@ -807,10 +837,14 @@ fn analyze_methods(
                 // Continue with regular processing for function metadata
             }
 
-            // Handle request-response methods (local, remote, http - NOT eth)
-            if has_http || has_local || has_remote {
+            // Handle request-response methods (local, remote, http, terminal - NOT eth)
+            if has_http || has_local || has_remote || has_terminal {
+                // Validate terminal handlers specifically
+                if has_terminal {
+                    validate_terminal_handler(method)?;
+                }
                 validate_request_response_function(method)?;
-                let metadata = extract_function_metadata(method, has_local, has_remote, has_http, false);
+                let metadata = extract_function_metadata(method, has_local, has_remote, has_http, has_terminal, false);
 
                 // Parameter-less HTTP handlers can optionally specify a path, but it's not required
                 // They can use get_path() and get_method() to handle requests dynamically
@@ -824,7 +858,7 @@ fn analyze_methods(
     if function_metadata.is_empty() {
         return Err(syn::Error::new(
             proc_macro2::Span::call_site(),
-            "You must specify at least one handler with #[remote], #[local] or #[http] attribute. Without any handlers, this hyperprocess wouldn't respond to any requests.",
+            "You must specify at least one handler with #[remote], #[local], #[terminal] or #[http] attribute. Without any handlers, this hyperprocess wouldn't respond to any requests.",
         ));
     }
 
@@ -878,6 +912,7 @@ fn extract_function_metadata(
     is_local: bool,
     is_remote: bool,
     is_http: bool,
+    is_terminal: bool,
     is_eth: bool,
 ) -> FunctionMetadata {
     let ident = method.sig.ident.clone();
@@ -922,6 +957,7 @@ fn extract_function_metadata(
         is_local,
         is_remote,
         is_http,
+        is_terminal,
         is_eth,
         http_methods,
         http_path,
@@ -1053,6 +1089,7 @@ fn generate_handler_dispatch(
             HandlerType::Local => "No local handlers defined but received a local request",
             HandlerType::Remote => "No remote handlers defined but received a remote request",
             HandlerType::Http => "No HTTP handlers defined but received an HTTP request",
+            HandlerType::Terminal => "No terminal handlers defined but received a terminal request",
             HandlerType::Eth => "No ETH handlers defined but received an ETH request",
         };
         return quote! {
@@ -1064,6 +1101,7 @@ fn generate_handler_dispatch(
         HandlerType::Local => "local",
         HandlerType::Remote => "remote",
         HandlerType::Http => "http",
+        HandlerType::Terminal => "terminal",
         HandlerType::Eth => "eth",
     };
 
@@ -1114,6 +1152,14 @@ fn generate_response_handling(
 ) -> proc_macro2::TokenStream {
     match handler_type {
         HandlerType::Local | HandlerType::Remote => {
+            quote! {
+                // Instead of wrapping in HPMResponse enum, directly serialize the result
+                let resp = hyperware_process_lib::Response::new()
+                    .body(serde_json::to_vec(&result).unwrap());
+                resp.send().unwrap();
+            }
+        }
+        HandlerType::Terminal => {
             quote! {
                 // Instead of wrapping in HPMResponse enum, directly serialize the result
                 let resp = hyperware_process_lib::Response::new()
@@ -1947,6 +1993,8 @@ fn generate_message_handlers(
         generate_local_message_handler(self_ty, local_and_remote_request_match_arms);
     let remote_message_handler =
         generate_remote_message_handler(self_ty, remote_request_match_arms);
+    let terminal_message_handler =
+        generate_terminal_message_handler(self_ty, &handler_arms.terminal);
     let eth_message_handler =
         generate_eth_message_handler(self_ty, eth_method_call);
 
@@ -1987,7 +2035,41 @@ fn generate_message_handlers(
 
         #local_message_handler
         #remote_message_handler
+        #terminal_message_handler
         #eth_message_handler
+    }
+}
+
+/// Generate terminal message handler
+fn generate_terminal_message_handler(
+    self_ty: &Box<syn::Type>,
+    match_arms: &proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
+    quote! {
+        /// Handle terminal messages
+        fn handle_terminal_message(state: *mut #self_ty, message: hyperware_process_lib::Message) {
+            hyperware_process_lib::logging::debug!("Processing terminal message from: {:?}", message.source());
+            match serde_json::from_slice::<HPMRequest>(message.body()) {
+                Ok(request) => {
+                    unsafe {
+                        #match_arms
+                        hyperware_process_lib::hyperapp::maybe_save_state(&mut *state);
+                    }
+                },
+                Err(e) => {
+                    let raw_body = String::from_utf8_lossy(message.body());
+                    hyperware_process_lib::logging::error!(
+                        "Failed to deserialize terminal request into HPMRequest enum.\n\
+                        Error: {}\n\
+                        Source: {:?}\n\
+                        Body: {}\n\
+                        \n\
+                        💡 This usually means the message format doesn't match any of your #[terminal] handlers.",
+                        e, message.source(), raw_body
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -2199,6 +2281,8 @@ fn generate_component_impl(
                                 hyperware_process_lib::Message::Request { .. } => {
                                     if message.is_local() && message.source().process == "http-server:distro:sys" {
                                         handle_http_server_message(&mut state, message);
+                                    } else if message.is_local() && message.source().package_id().to_string() == "terminal:sys" {
+                                        handle_terminal_message(&mut state, message);
                                     } else if message.is_local() && message.source().process == "http-client:distro:sys" {
                                         handle_websocket_client_message(&mut state, message);
                                     } else if message.is_local() && message.source().process == "eth:distro:sys" {
@@ -2282,6 +2366,7 @@ pub fn hyperprocess(attr: TokenStream, item: TokenStream) -> TokenStream {
         remote: generate_handler_dispatch(&handlers.remote, self_ty, HandlerType::Remote),
         // HTTP dispatch arms are only generated for handlers with parameters.
         http: generate_handler_dispatch(&http_handlers_with_params, self_ty, HandlerType::Http),
+        terminal: generate_handler_dispatch(&handlers.terminal, self_ty, HandlerType::Terminal),
         // Generate dispatch for combined local and remote handlers
         local_and_remote: generate_handler_dispatch(
             &handlers.local_and_remote,
