@@ -469,7 +469,15 @@ fn handle_eth(&mut self, eth_sub_result: EthSubResult) -> String {
             // Handle subscription error
             println!("ETH subscription error: id={}, error={}", 
                 eth_sub_error.id, eth_sub_error.error);
-            "Subscription error handled".to_string()
+
+            self.hypermap.provider.subscribe_loop(
+                    1,
+                    make_filter(&state.hypermap, None),
+                    0,
+                    0,
+                );
+
+            "ETH subscription error resolved, subscription reinstated".to_string()
         }
     }
 }
@@ -486,7 +494,15 @@ async fn handle_eth_async(&mut self, eth_sub_result: EthSubResult) -> String {
         Err(eth_sub_error) => {
             // Handle error asynchronously
             self.log_eth_error(&eth_sub_error).await;
-            "Error logged".to_string()
+            
+            self.hypermap.provider.subscribe_loop(
+                    1, 
+                    make_filter(&state.hypermap, None),
+                    0,
+                    0,
+                );
+
+            "ETH subscription error resolved, subscription reinstated".to_string()
         }
     }
 }
