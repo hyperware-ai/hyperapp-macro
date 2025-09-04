@@ -203,42 +203,45 @@ For terminal handlers, the JSON body should match the generated request enum var
 **Handler Implementation:**
 ```rust
 #[terminal]
-fn handle_terminal_command(&mut self, command: String) -> String {
+fn handle_terminal_command(&mut self, command: String) {
     match command.as_str() {
-        "status" => format!("Counter: {}", self.counter),
+        "status" => kiprintln!("Counter: {}", self.counter),
         "reset" => {
             self.counter = 0;
-            "Counter reset".to_string()
+            kiprintln!("Counter reset");
         },
         "increment" => {
             self.counter += 1;
-            format!("Counter incremented to: {}", self.counter)
+            kiprintln!("Counter incremented to: {}", self.counter);
         },
-        "help" => "Available commands: status, reset, increment, help".to_string(),
-        _ => "Unknown command. Type 'help' for available commands.".to_string()
+        "help" => kiprintln!("Available commands: status, reset, increment, help"),
+        _ => kiprintln!("Unknown command. Type 'help' for available commands.")
     }
 }
 ```
 
 **Messaging the Terminal Handler:**
 ```bash
-# Get current status and await response
-m -a 5 our@my-process:my-package:my-publisher.os '{"HandleTerminalCommand": "status"}'
+# Get current status (output will be printed to terminal)
+m our@my-process:my-package:my-publisher.os '{"HandleTerminalCommand": "status"}'
 
-# Reset the counter and await response
-m -a 5 our@my-process:my-package:my-publisher.os '{"HandleTerminalCommand": "reset"}'
+# Reset the counter (output will be printed to terminal)
+m our@my-process:my-package:my-publisher.os '{"HandleTerminalCommand": "reset"}'
 
-# Increment counter without waiting for response
+# Increment counter (output will be printed to terminal)
 m our@my-process:my-package:my-publisher.os '{"HandleTerminalCommand": "increment"}'
 
-# Get help
-m -a 5 our@my-process:my-package:my-publisher.os '{"HandleTerminalCommand": "help"}'
+# Get help (output will be printed to terminal)
+m our@my-process:my-package:my-publisher.os '{"HandleTerminalCommand": "help"}'
 ```
 
+**Important Notes:**
+- Terminal handlers should **not** have a return value 
+- All output should be handled with `kiprintln!()` or logging functions
 
 ```
 
-The function arguments and the return values _have_ to be serializable with `Serde`.
+The function arguments _have_ to be serializable with `Serde`, but return values are not used.
 
 #### HTTP Method Support and Smart Routing
 

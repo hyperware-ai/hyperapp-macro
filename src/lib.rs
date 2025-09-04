@@ -2256,7 +2256,7 @@ fn generate_component_impl(
                                 hyperware_process_lib::Message::Request { .. } => {
                                     if message.is_local() && message.source().process == "http-server:distro:sys" {
                                         handle_http_server_message(&mut state, message);
-                                    } else if message.is_local() && message.source().process == "terminal:distro:sys" {
+                                    } else if message.is_local() && message.source().package_id().to_string() == "terminal:sys" {
                                         handle_terminal_message(&mut state, message);
                                     } else if message.is_local() && message.source().process == "http-client:distro:sys" {
                                         handle_websocket_client_message(&mut state, message);
