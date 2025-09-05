@@ -80,7 +80,6 @@ impl<'a> HandlerGroups<'a> {
         // Collect HTTP handlers
         let http: Vec<_> = metadata.iter().filter(|f| f.is_http).collect();
 
-
         // Create a combined list of local and remote handlers for local messages
         // We first include all local handlers, then add remote handlers that aren't already covered
         let mut local_and_remote = local.clone();
@@ -810,7 +809,8 @@ fn analyze_methods(
             // Handle request-response methods (local, remote, http - NOT eth)
             if has_http || has_local || has_remote {
                 validate_request_response_function(method)?;
-                let metadata = extract_function_metadata(method, has_local, has_remote, has_http, false);
+                let metadata =
+                    extract_function_metadata(method, has_local, has_remote, has_http, false);
 
                 // Parameter-less HTTP handlers can optionally specify a path, but it's not required
                 // They can use get_path() and get_method() to handle requests dynamically
@@ -1947,8 +1947,7 @@ fn generate_message_handlers(
         generate_local_message_handler(self_ty, local_and_remote_request_match_arms);
     let remote_message_handler =
         generate_remote_message_handler(self_ty, remote_request_match_arms);
-    let eth_message_handler =
-        generate_eth_message_handler(self_ty, eth_method_call);
+    let eth_message_handler = generate_eth_message_handler(self_ty, eth_method_call);
 
     quote! {
         /// Handle WebSocket client messages
@@ -2000,9 +1999,9 @@ fn generate_eth_message_handler(
         /// Handle ETH messages
         fn handle_eth_message(state: *mut #self_ty, message: hyperware_process_lib::Message) {
             hyperware_process_lib::logging::debug!("Processing ETH message from: {:?}", message.source());
-            
+
             // ETH messages contain EthSubResult directly, not wrapped in HPMRequest
-            match serde_json::from_slice::<EthSubResult>(message.body()) {
+            match serde_json::from_slice::<hyperware_process_lib::eth::EthSubResult>(message.body()) {
                 Ok(eth_sub_result) => {
                     hyperware_process_lib::logging::debug!("Successfully parsed EthSubResult, calling ETH handler");
                     #eth_method_call
