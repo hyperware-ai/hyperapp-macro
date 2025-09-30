@@ -1300,30 +1300,6 @@ enum Response {
 }
 ```
 
-#### Handler Dispatch Generation
-
-For each handler, the macro generates dispatch code:
-
-**Async Handler Example**:
-
-```rust
-Request::FetchData(id) => {
-    let id_captured = id;  // Capture parameter before moving
-    let state_ptr: *mut MyState = state; 
-    
-    hyper! {
-        let result = unsafe { (*state_ptr).fetch_data(id_captured).await };
-        
-        // For remote/local handlers
-        let resp = Response::new()
-            .body(serde_json::to_vec(&result).unwrap());
-        resp.send().unwrap();
-    }
-}
-```
-
-The `hyper!` macro lets our custom runtime execute this async code.
-
 #### WIT Bindings Generation
 
 We parse the `wit_world` in our `/api` folder with:
