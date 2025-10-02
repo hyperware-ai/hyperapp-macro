@@ -1668,6 +1668,7 @@ fn generate_http_handler_dispatcher(
     quote! {
         hyperware_process_lib::logging::debug!("Starting handler matching for {} {}", http_method, current_path);
 
+        
         if blob_opt.is_some() && !blob_opt.as_ref().unwrap().bytes.is_empty() {
             hyperware_process_lib::logging::debug!("Request has body, using two-phase matching");
 
@@ -2197,7 +2198,6 @@ fn generate_component_impl(
                                     });
                                 }
                                 hyperware_process_lib::Message::Request { .. } => {
-                                    hyperware_process_lib::logging::debug!("received message: {:?}", message);
                                     if message.is_local() && message.source().process == "http-server:distro:sys" {
                                         if let Ok(http_server_request) = serde_json::from_slice::<hyperware_process_lib::http::server::HttpServerRequest>(message.body()) {
                                             handle_http_server_message(&mut state, message);
