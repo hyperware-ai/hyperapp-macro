@@ -2196,14 +2196,19 @@ fn generate_component_impl(
                                     });
                                 }
                                 hyperware_process_lib::Message::Request { .. } => {
+                                    hyperware_process_lib::logging::debug!("received message: {:?}", message);
                                     if message.is_local() && message.source().process == "http-server:distro:sys" {
-                                        handle_http_server_message(&mut state, message);
+                                        if let Ok(http_server_request) = serde_json::from_slice::<hyperware_process_lib::http::server::HttpServerRequest>(message.body()) {
+                                            handle_http_server_message(&mut state, message);
+                                        } else {
+                                            // the only thing is that erroring will be clunky, because if there is a misformatted http message, we will parse it as a local message
+                                            // can add logging in the local message handler to say if there was a misformatted http msg it would have ended up there
+                                            handle_local_message(&mut state, message);
+                                        }
                                     } else if message.is_local() && message.source().process == "http-client:distro:sys" {
                                         handle_websocket_client_message(&mut state, message);
                                     } else if message.is_local() && message.source().process == "eth:distro:sys" {
                                         handle_eth_message(&mut state, message);
-                                    } else if message.is_local() {
-                                        handle_local_message(&mut state, message);
                                     } else {
                                         handle_remote_message(&mut state, message);
                                     }
