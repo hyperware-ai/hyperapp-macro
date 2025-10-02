@@ -1960,13 +1960,14 @@ fn generate_message_handlers(
 
             match serde_json::from_slice::<hyperware_process_lib::http::server::HttpServerRequest>(message.body()) {
                 Ok(http_server_request) => {
-                    match http_server_request {
+                    match http_server_request.clone() {
                         hyperware_process_lib::http::server::HttpServerRequest::Http(http_request) => {
+
                             hyperware_process_lib::logging::debug!("Processing HTTP request, message has blob: {}", blob_opt.is_some());
                             if let Some(ref blob) = blob_opt {
                                 hyperware_process_lib::logging::debug!("Blob size: {} bytes, content: {}", blob.bytes.len(), String::from_utf8_lossy(&blob.bytes[..std::cmp::min(200, blob.bytes.len())]));
                             }
-
+                            hyperware_process_lib::logging::debug!("http_server_request: {:?}", http_server_request.clone());
                             #http_context_setup
                             #http_request_parsing
                             #http_dispatcher
@@ -2100,7 +2101,7 @@ fn generate_component_impl(
             // Initialize logging
             hyperware_process_lib::logging::init_logging(
                 hyperware_process_lib::logging::Level::DEBUG,
-                hyperware_process_lib::logging::Level::INFO,
+                hyperware_process_lib::logging::Level::DEBUG,
                 None, Some((0, 0, 1, 1)), None
             ).unwrap();
         }
