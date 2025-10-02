@@ -1668,7 +1668,6 @@ fn generate_http_handler_dispatcher(
     quote! {
         hyperware_process_lib::logging::debug!("Starting handler matching for {} {}", http_method, current_path);
 
-        
         if blob_opt.is_some() && !blob_opt.as_ref().unwrap().bytes.is_empty() {
             hyperware_process_lib::logging::debug!("Request has body, using two-phase matching");
 
@@ -1961,14 +1960,12 @@ fn generate_message_handlers(
 
             match serde_json::from_slice::<hyperware_process_lib::http::server::HttpServerRequest>(message.body()) {
                 Ok(http_server_request) => {
-                    match http_server_request.clone() {
+                    match http_server_request {
                         hyperware_process_lib::http::server::HttpServerRequest::Http(http_request) => {
-
                             hyperware_process_lib::logging::debug!("Processing HTTP request, message has blob: {}", blob_opt.is_some());
                             if let Some(ref blob) = blob_opt {
                                 hyperware_process_lib::logging::debug!("Blob size: {} bytes, content: {}", blob.bytes.len(), String::from_utf8_lossy(&blob.bytes[..std::cmp::min(200, blob.bytes.len())]));
                             }
-                            hyperware_process_lib::logging::debug!("http_server_request: {:?}", http_server_request.clone());
                             #http_context_setup
                             #http_request_parsing
                             #http_dispatcher
@@ -2202,8 +2199,6 @@ fn generate_component_impl(
                                         if let Ok(http_server_request) = serde_json::from_slice::<hyperware_process_lib::http::server::HttpServerRequest>(message.body()) {
                                             handle_http_server_message(&mut state, message);
                                         } else {
-                                            // the only thing is that erroring will be clunky, because if there is a misformatted http message, we will parse it as a local message
-                                            // can add logging in the local message handler to say if there was a misformatted http msg it would have ended up there
                                             handle_local_message(&mut state, message);
                                         }
                                     } else if message.is_local() && message.source().process == "http-client:distro:sys" {
