@@ -2205,6 +2205,8 @@ fn generate_component_impl(
                                         handle_websocket_client_message(&mut state, message);
                                     } else if message.is_local() && message.source().process == "eth:distro:sys" {
                                         handle_eth_message(&mut state, message);
+                                    } else if message.is_local() {
+                                        handle_local_message(&mut state, message);
                                     } else {
                                         handle_remote_message(&mut state, message);
                                     }
