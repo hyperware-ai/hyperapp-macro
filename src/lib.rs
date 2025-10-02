@@ -2099,7 +2099,7 @@ fn generate_component_impl(
             // Initialize logging
             hyperware_process_lib::logging::init_logging(
                 hyperware_process_lib::logging::Level::DEBUG,
-                hyperware_process_lib::logging::Level::DEBUG,
+                hyperware_process_lib::logging::Level::INFO,
                 None, Some((0, 0, 1, 1)), None
             ).unwrap();
         }
