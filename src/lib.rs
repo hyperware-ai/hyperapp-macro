@@ -1881,7 +1881,8 @@ fn generate_local_message_handler(
                         Source: {:?}\n\
                         Body: {}\n\
                         \n\
-                        💡 This usually means the message format doesn't match any of your #[local] or #[remote] handlers.",
+                        💡 This usually means the message format doesn't match any of your #[local] or #[remote] handlers.\n\
+                        💡 If you are sending an HTTP message, if it is malformed, it might have ended up in the local message handler.",
                         e, message.source(), raw_body
                     );
                 }
