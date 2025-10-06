@@ -1955,34 +1955,21 @@ fn generate_message_handlers(
             #websocket_client_handler
         }
         /// Handle messages from the HTTP server
-        fn handle_http_server_message(state: *mut #self_ty, message: hyperware_process_lib::Message) {
-            let blob_opt = message.blob();
-
-            match serde_json::from_slice::<hyperware_process_lib::http::server::HttpServerRequest>(message.body()) {
-                Ok(http_server_request) => {
-                    match http_server_request {
-                        hyperware_process_lib::http::server::HttpServerRequest::Http(http_request) => {
-                            hyperware_process_lib::logging::debug!("Processing HTTP request, message has blob: {}", blob_opt.is_some());
-                            if let Some(ref blob) = blob_opt {
-                                hyperware_process_lib::logging::debug!("Blob size: {} bytes, content: {}", blob.bytes.len(), String::from_utf8_lossy(&blob.bytes[..std::cmp::min(200, blob.bytes.len())]));
-                            }
-                            #http_context_setup
-                            #http_request_parsing
-                            #http_dispatcher
-                        },
-                        #websocket_handlers
+        fn handle_http_server_message(state: *mut #self_ty, http_server_request: hyperware_process_lib::http::server::HttpServerRequest, blob_opt: Option<hyperware_process_lib::LazyLoadBlob>) {
+            match http_server_request {
+                hyperware_process_lib::http::server::HttpServerRequest::Http(http_request) => {
+                    hyperware_process_lib::logging::debug!("Processing HTTP request, message has blob: {}", blob_opt.is_some());
+                    if let Some(ref blob) = blob_opt {
+                        hyperware_process_lib::logging::debug!("Blob size: {} bytes, content: {}", blob.bytes.len(), String::from_utf8_lossy(&blob.bytes[..std::cmp::min(200, blob.bytes.len())]));
                     }
+                    #http_context_setup
+                    #http_request_parsing
+                    #http_dispatcher
                 },
-                Err(e) => {
-                    hyperware_process_lib::logging::error!(
-                        "Failed to parse HTTP server request: {}\n\
-                        This usually indicates a malformed message to the HTTP server.",
-                        e
-                    );
-                }
+                #websocket_handlers
             }
         }
-
+        
         #local_message_handler
         #remote_message_handler
         #eth_message_handler
@@ -2197,7 +2184,7 @@ fn generate_component_impl(
                                 hyperware_process_lib::Message::Request { .. } => {
                                     if message.is_local() && message.source().process == "http-server:distro:sys" {
                                         if let Ok(http_server_request) = serde_json::from_slice::<hyperware_process_lib::http::server::HttpServerRequest>(message.body()) {
-                                            handle_http_server_message(&mut state, message);
+                                            handle_http_server_message(&mut state, http_server_request, message.blob());
                                         } else {
                                             handle_local_message(&mut state, message);
                                         }
