@@ -1145,8 +1145,18 @@ fn generate_response_handling(
                     })
                 });
 
+                // Get status code from the current HTTP context
+                let response_status = hyperware_process_lib::hyperapp::APP_HELPERS.with(|helpers| {
+                    helpers
+                        .borrow()
+                        .current_http_context
+                        .as_ref()
+                        .map(|ctx| ctx.response_status)
+                        .unwrap_or(hyperware_process_lib::http::StatusCode::OK)
+                });
+
                 hyperware_process_lib::http::server::send_response(
-                    hyperware_process_lib::http::StatusCode::OK,
+                    response_status,
                     headers_opt,
                     response_bytes
                 );
@@ -1403,6 +1413,7 @@ fn generate_http_context_setup() -> proc_macro2::TokenStream {
             helpers.borrow_mut().current_http_context = Some(hyperware_process_lib::hyperapp::HttpRequestContext {
                 request: http_request,
                 response_headers: std::collections::HashMap::new(),
+                response_status: hyperware_process_lib::http::StatusCode::OK,
             });
         });
         hyperware_process_lib::logging::debug!("HTTP context established");
@@ -1594,8 +1605,17 @@ fn generate_parameterless_handler_dispatch(
                 })
             });
 
+            let response_status = hyperware_process_lib::hyperapp::APP_HELPERS.with(|helpers| {
+                helpers
+                    .borrow()
+                    .current_http_context
+                    .as_ref()
+                    .map(|ctx| ctx.response_status)
+                    .unwrap_or(hyperware_process_lib::http::StatusCode::OK)
+            });
+
             hyperware_process_lib::http::server::send_response(
-                hyperware_process_lib::http::StatusCode::OK,
+                response_status,
                 headers_opt,
                 response_bytes
             );
