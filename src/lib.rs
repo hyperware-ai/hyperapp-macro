@@ -1109,32 +1109,21 @@ fn generate_handler_dispatch(
                         unexpected
                     );
 
-                    let error_message = format!("Unexpected {} request variant", #type_name);
-                    let error_details = format!("{:?}", unexpected);
-
                     let send_error_bytes = hyperware_process_lib::hyperapp::APP_HELPERS.with(|helpers| {
                         let helpers_ref = helpers.borrow();
                         helpers_ref.current_message.clone().map(|original_message| {
-                            let context_bytes = serde_json::json!({
-                                "error": error_message.clone(),
-                                "received": error_details.clone(),
-                            })
-                            .to_string()
-                            .into_bytes();
-
                             let send_error = hyperware_process_lib::SendError {
                                 kind: hyperware_process_lib::SendErrorKind::Timeout,
                                 target: original_message.source().clone(),
                                 message: original_message,
                                 lazy_load_blob: None,
-                                context: Some(context_bytes.clone()),
+                                context: None,
                             };
-
-                            serde_json::to_vec(&send_error).unwrap_or(context_bytes)
+                            serde_json::to_vec(&send_error)
                         })
                     });
 
-                    if let Some(payload_bytes) = send_error_bytes {
+                    if let Some(Ok(payload_bytes)) = send_error_bytes {
                         if let Err(e) = hyperware_process_lib::Response::new().body(payload_bytes).send() {
                             hyperware_process_lib::logging::error!(
                                 "Failed to send SendError for unexpected {} variant: {}",
@@ -1142,14 +1131,10 @@ fn generate_handler_dispatch(
                                 e
                             );
                         }
-                    } else if let Err(e) = hyperware_process_lib::Response::new()
-                        .body(error_message.clone())
-                        .send()
-                    {
+                    } else {
                         hyperware_process_lib::logging::error!(
-                            "Failed to send fallback error response for unexpected {} variant: {}",
+                            "Failed to construct a SendError for unexpected {} variant",
                             #type_name,
-                            e
                         );
                     }
                 }
