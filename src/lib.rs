@@ -1990,7 +1990,7 @@ fn generate_message_handlers(
                 #websocket_handlers
             }
         }
-        
+
         #local_message_handler
         #remote_message_handler
         #eth_message_handler
@@ -2192,15 +2192,17 @@ fn generate_component_impl(
 
                             match message {
                                 hyperware_process_lib::Message::Response { body, context, .. } => {
-                                    let correlation_id = context
+                                let correlation_id = context
                                         .as_deref()
                                         .map(|bytes| String::from_utf8_lossy(bytes).to_string())
                                         .unwrap_or_else(|| "no context".to_string());
 
-                                    hyperware_process_lib::hyperapp::RESPONSE_REGISTRY.with(|registry| {
-                                        let mut registry_mut = registry.borrow_mut();
-                                        registry_mut.insert(correlation_id, body);
-                                    });
+                                    if !hyperware_process_lib::hyperapp::deliver_pending_oneshot_response(&correlation_id, body.clone()) {
+                                        hyperware_process_lib::hyperapp::RESPONSE_REGISTRY.with(|registry| {
+                                            let mut registry_mut = registry.borrow_mut();
+                                            registry_mut.insert(correlation_id, body);
+                                        });
+                                    }
                                 }
                                 hyperware_process_lib::Message::Request { .. } => {
                                     if message.is_local() && message.source().process == "http-server:distro:sys" {
@@ -2230,10 +2232,13 @@ fn generate_component_impl(
                                 let correlation_id = String::from_utf8_lossy(context)
                                     .to_string();
 
-                                hyperware_process_lib::hyperapp::RESPONSE_REGISTRY.with(|registry| {
-                                    let mut registry_mut = registry.borrow_mut();
-                                    registry_mut.insert(correlation_id, serde_json::to_vec(error).unwrap());
-                                });
+                                let payload = serde_json::to_vec(error).unwrap();
+                                if !hyperware_process_lib::hyperapp::deliver_pending_oneshot_response(&correlation_id, payload.clone()) {
+                                    hyperware_process_lib::hyperapp::RESPONSE_REGISTRY.with(|registry| {
+                                        let mut registry_mut = registry.borrow_mut();
+                                        registry_mut.insert(correlation_id, payload);
+                                    });
+                                }
                             }
 
                         }
