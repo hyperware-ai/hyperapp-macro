@@ -1414,6 +1414,7 @@ fn generate_http_context_setup() -> proc_macro2::TokenStream {
                 request: http_request,
                 response_headers: std::collections::HashMap::new(),
                 response_status: hyperware_process_lib::http::StatusCode::OK,
+                response_body: None,
             });
         });
         hyperware_process_lib::logging::debug!("HTTP context established");
