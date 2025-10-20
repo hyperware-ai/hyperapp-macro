@@ -1628,7 +1628,7 @@ dependencies = [
 [[package]]
 name = "hyperware_process_lib"
 version = "2.2.0"
-source = "git+https://github.com/hyperware-ai/process_lib?rev=e8b065179ce5d15893a23142416e59c87e0f31f6#e8b065179ce5d15893a23142416e59c87e0f31f6"
+source = "git+https://github.com/hyperware-ai/process_lib?rev=4f7c7132c5cf79c9f348d7b303b7093fa5a9cca2#4f7c7132c5cf79c9f348d7b303b7093fa5a9cca2"
 dependencies = [
  "alloy",
  "alloy-primitives",
@@ -1638,6 +1638,7 @@ dependencies = [
  "base64",
  "bincode",
  "color-eyre",
+ "futures-channel",
  "futures-util",
  "http",
  "mime_guess",
