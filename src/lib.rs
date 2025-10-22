@@ -16,6 +16,7 @@ mod kw {
     syn::custom_keyword!(icon);
     syn::custom_keyword!(widget);
     syn::custom_keyword!(ui);
+    syn::custom_keyword!(ui_path);
     syn::custom_keyword!(endpoints);
     syn::custom_keyword!(save_config);
     syn::custom_keyword!(wit_world);
@@ -30,6 +31,7 @@ struct HyperProcessArgs {
     icon: Option<String>,
     widget: Option<String>,
     ui: Option<Expr>,
+    ui_path: Option<String>,
     endpoints: Expr,
     save_config: Expr,
     wit_world: String,
@@ -396,6 +398,7 @@ fn parse_args(attr_args: MetaList) -> syn::Result<HyperProcessArgs> {
     let mut icon = None;
     let mut widget = None;
     let mut ui = None;
+    let mut ui_path = None;
     let mut endpoints = None;
     let mut save_config = None;
     let mut wit_world = None;
@@ -421,6 +424,9 @@ fn parse_args(attr_args: MetaList) -> syn::Result<HyperProcessArgs> {
                 "ui" => {
                     ui = parse_ui_expr(&nv.value)?;
                 }
+                "ui_path" => {
+                    ui_path = Some(parse_string_literal(&nv.value, nv.value.span())?);
+                }
                 "endpoints" => endpoints = Some(nv.value.clone()),
                 "save_config" => save_config = Some(nv.value.clone()),
                 "wit_world" => {
@@ -438,6 +444,7 @@ fn parse_args(attr_args: MetaList) -> syn::Result<HyperProcessArgs> {
         icon,
         widget,
         ui,
+        ui_path,
         endpoints: endpoints.ok_or_else(|| syn::Error::new(span, "Missing 'endpoints'"))?,
         save_config: save_config.ok_or_else(|| syn::Error::new(span, "Missing 'save_config'"))?,
         wit_world: wit_world.ok_or_else(|| syn::Error::new(span, "Missing 'wit_world'"))?,
@@ -2085,6 +2092,11 @@ fn generate_component_impl(
         None => quote! { None },
     };
 
+    let ui_path = match &args.ui_path {
+        Some(path_str) => quote! { Some(#path_str.to_string()) },
+        None => quote! { None },
+    };
+
     let init_method_ident = &init_method_details.identifier;
     let init_method_call = &init_method_details.call;
     let ws_method_call = &ws_method_details.call;
@@ -2154,6 +2166,7 @@ fn generate_component_impl(
                 let app_icon = #icon;
                 let app_widget = #widget;
                 let ui_config = #ui;
+                let ui_path = #ui_path;
                 let endpoints = #endpoints;
 
                 // Setup UI if needed
@@ -2164,7 +2177,7 @@ fn generate_component_impl(
                 #logging_init
 
                 // Setup server with endpoints
-                let mut server = hyperware_process_lib::hyperapp::setup_server(ui_config.as_ref(), &endpoints);
+                let mut server = hyperware_process_lib::hyperapp::setup_server(ui_config.as_ref(), ui_path, &endpoints);
                 hyperware_process_lib::hyperapp::APP_HELPERS.with(|ctx| {
                     ctx.borrow_mut().current_server = Some(&mut server);
                 });
