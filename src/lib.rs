@@ -2209,11 +2209,15 @@ fn generate_component_impl(
                                         .as_deref()
                                         .map(|bytes| String::from_utf8_lossy(bytes).to_string())
                                         .unwrap_or_else(|| "no context".to_string());
-
-                                    hyperware_process_lib::hyperapp::RESPONSE_REGISTRY.with(|registry| {
-                                        let mut registry_mut = registry.borrow_mut();
-                                        registry_mut.insert(correlation_id, body);
-                                    });
+                                    let was_cancelled =
+                                        hyperware_process_lib::hyperapp::CANCELLED_RESPONSES.with(|set| {
+                                            set.borrow_mut().remove(&correlation_id)
+                                        });
+                                    if !was_cancelled {
+                                        hyperware_process_lib::hyperapp::RESPONSE_REGISTRY.with(|registry| {
+                                            registry.borrow_mut().insert(correlation_id, body);
+                                        });
+                                    }
                                 }
                                 hyperware_process_lib::Message::Request { .. } => {
                                     if message.is_local() && message.source().process == "http-server:distro:sys" {
@@ -2242,13 +2246,19 @@ fn generate_component_impl(
                             {
                                 let correlation_id = String::from_utf8_lossy(context)
                                     .to_string();
-
-                                hyperware_process_lib::hyperapp::RESPONSE_REGISTRY.with(|registry| {
-                                    let mut registry_mut = registry.borrow_mut();
-                                    registry_mut.insert(correlation_id, serde_json::to_vec(error).unwrap());
-                                });
+                                let was_cancelled =
+                                    hyperware_process_lib::hyperapp::CANCELLED_RESPONSES.with(|set| {
+                                        set.borrow_mut().remove(&correlation_id)
+                                    });
+                                if !was_cancelled {
+                                    hyperware_process_lib::hyperapp::RESPONSE_REGISTRY.with(|registry| {
+                                        registry.borrow_mut().insert(
+                                            correlation_id,
+                                            serde_json::to_vec(error).unwrap(),
+                                        );
+                                    });
+                                }
                             }
-
                         }
                     }
                 }
