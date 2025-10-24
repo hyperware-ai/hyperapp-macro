@@ -2216,7 +2216,7 @@ fn generate_component_impl(
                                     if !was_cancelled {
                                         hyperware_process_lib::hyperapp::RESPONSE_REGISTRY.with(|registry| {
                                             registry.borrow_mut().insert(correlation_id, body);
-                                    });
+                                        });
                                     }
                                 }
                                 hyperware_process_lib::Message::Request { .. } => {
