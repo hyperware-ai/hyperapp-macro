@@ -1078,9 +1078,75 @@ fn generate_handler_dispatch(
         .iter()
         .map(|func| generate_handler_dispatch_arm(func, self_ty, handler_type, type_name));
 
-    // Add an explicit unreachable for other variants
-    let unreachable_arm = quote! {
-        _ => unreachable!(concat!("Non-", #type_name, " request variant received in ", #type_name, " handler"))
+    // Gracefully handle unexpected variants
+    let unreachable_arm = match handler_type {
+        HandlerType::Http => {
+            quote! {
+                unexpected => {
+                    hyperware_process_lib::logging::error!(
+                        "Unexpected {} request variant received in HTTP handler: {:?}",
+                        #type_name,
+                        unexpected
+                    );
+
+                    let error_body = serde_json::json!({
+                        "error": format!("Unexpected {} request variant", #type_name),
+                        "received": format!("{:?}", unexpected),
+                    })
+                    .to_string()
+                    .into_bytes();
+
+                    hyperware_process_lib::http::server::send_response(
+                        hyperware_process_lib::http::StatusCode::BAD_REQUEST,
+                        None,
+                        error_body,
+                    );
+
+                    hyperware_process_lib::hyperapp::clear_http_request_context();
+                }
+            }
+        }
+        _ => {
+            quote! {
+                unexpected => {
+                    hyperware_process_lib::logging::error!(
+                        "Unexpected {} request variant received in {} handler: {:?}",
+                        #type_name,
+                        #type_name,
+                        unexpected
+                    );
+
+                    let send_error_bytes = hyperware_process_lib::hyperapp::APP_HELPERS.with(|helpers| {
+                        let helpers_ref = helpers.borrow();
+                        helpers_ref.current_message.clone().map(|original_message| {
+                            let send_error = hyperware_process_lib::SendError {
+                                kind: hyperware_process_lib::SendErrorKind::Timeout,
+                                target: original_message.source().clone(),
+                                message: original_message,
+                                lazy_load_blob: None,
+                                context: None,
+                            };
+                            serde_json::to_vec(&send_error)
+                        })
+                    });
+
+                    if let Some(Ok(payload_bytes)) = send_error_bytes {
+                        if let Err(e) = hyperware_process_lib::Response::new().body(payload_bytes).send() {
+                            hyperware_process_lib::logging::error!(
+                                "Failed to send SendError for unexpected {} variant: {}",
+                                #type_name,
+                                e
+                            );
+                        }
+                    } else {
+                        hyperware_process_lib::logging::error!(
+                            "Failed to construct a SendError for unexpected {} variant",
+                            #type_name,
+                        );
+                    }
+                }
+            }
+        }
     };
 
     quote! {
