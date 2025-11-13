@@ -1,5 +1,5 @@
 [package]
-name = "hyperprocess_macro"
+name = "hyperapp_macro"
 version = "0.1.0"
 edition = "2021"
 

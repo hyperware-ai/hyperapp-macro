@@ -1,4 +1,4 @@
-# Hyperware Process Framework
+# Hyperapp Framework
 
 ![How it feels to use Hyperware](hyperware.jpg)
 How it feels to use hyperware
@@ -9,7 +9,7 @@ How it feels to use hyperware
   - [Overview](#overview)
   - [Getting Started](#getting-started)
   - [State Management](#state-management)
-  - [Hyperprocess Macro Parameters](#hyperprocess-macro-parameters)
+  - [Hyperapp Macro Parameters](#hyperapp-macro-parameters)
   - [Handler Types](#handler-types)
   - [Special Methods](#special-methods)
     - [Init Method](#init-method)
@@ -57,7 +57,7 @@ So this includes:
 To create a Hyperware process, you need to:
 
 1. Define your process state as a struct
-2. Implement the struct with the `hyperprocess` macro
+2. Implement the struct with the `hyperapp` macro
 3. Define handlers for different types of requests
 
 Here's a minimal example:
@@ -68,7 +68,7 @@ struct MyProcessState {
     counter: u64,
 }
 
-#[hyperprocess(
+#[hyperapp(
     name = "My Process",
     ui = Some(HttpBindingConfig::default()),
     endpoints = vec![
@@ -100,7 +100,7 @@ Your state should implement the `Default` and `State` traits, and be serializabl
 
 ### Hyperprocess Macro Parameters
 
-The `hyperprocess` macro accepts the following parameters:
+The `hyperapp` macro accepts the following parameters:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -115,7 +115,7 @@ The `hyperprocess` macro accepts the following parameters:
 Example:
 
 ```rust
-#[hyperprocess(
+#[hyperapp(
     name = "Async Requester",
     ui = Some(HttpBindingConfig::default()),
     endpoints = vec![
@@ -305,7 +305,7 @@ async fn async_handler(&mut self, data: MyData) -> Result<String, String> {
 You can bind HTTP handlers to specific paths using the `path` parameter:
 
 ```rust
-#[hyperprocess(
+#[hyperapp(
     endpoints = vec![
         Binding::Http { path: "/api", config: HttpBindingConfig::default() },
         Binding::Http { path: "/admin", config: HttpBindingConfig::default() }
@@ -565,7 +565,7 @@ struct AsyncRequesterState {
     request_count: u64,
 }
 
-#[hyperprocess(
+#[hyperapp(
     name = "Async Requester",
     ui = Some(HttpBindingConfig::default()),
     endpoints = vec![
@@ -742,7 +742,7 @@ The macro catches configuration errors at compile time:
 
 ```rust
 // This will fail to compile:
-#[hyperprocess(
+#[hyperapp(
     name = "test-app",
     // Missing required 'endpoints' parameter
     save_config = SaveOptions::Never,
@@ -1086,7 +1086,7 @@ This was achieved by implementing our own async runtime. Given that processes ar
 
 ### Macro Implementation
 
-The `hyperprocess` macro transforms a struct implementation into a fully-featured process:
+The `hyperapp` macro transforms a struct implementation into a fully-featured process:
 
 #### 1. Parsing Phase
 
@@ -1504,14 +1504,14 @@ graph TB
     %% BUILD PHASE - Where components are generated
     subgraph BuildPhase["⚙️ BUILD PHASE"]
         UserSrc[/"User Source Code
-        #[hyperprocess] macro
+        #[hyperapp] macro
         #[http], #[local], #[remote] methods"/]
 
         subgraph CodeGen["Code Generation Pipeline"]
             direction TB
 
             HyperBindgen["hyper-bindgen CLI
-            Scans for #[hyperprocess]"]
+            Scans for #[hyperapp]"]
 
             subgraph BindgenOutputs["hyper-bindgen Outputs"]
                 direction LR
@@ -1523,7 +1523,7 @@ graph TB
                 Cross-process types"]
             end
 
-            ProcMacro["hyperprocess Macro
+            ProcMacro["hyperapp Macro
             AST Transformation"]
 
             subgraph MacroOutputs["Macro Generated Code"]
