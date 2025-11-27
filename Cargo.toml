@@ -1,7 +1,12 @@
 [package]
 name = "hyperapp_macro"
+authors = ["Sybil Technologies AG"]
 version = "0.1.0"
 edition = "2021"
+description = "The macro for async, handler-based Hyperware Hyperapps."
+homepage = "https://hyperware.ai"
+repository = "https://github.com/hyperware-ai/hyperapp_macro"
+license = "Apache-2.0"
 
 [lib]
 proc-macro = true
