@@ -1731,7 +1731,7 @@ dependencies = [
 
 [[package]]
 name = "hyperapp_macro"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "hyperware_process_lib",
  "proc-macro2",
@@ -1742,8 +1742,7 @@ dependencies = [
 [[package]]
 name = "hyperware_process_lib"
 version = "2.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a88ae09ea2fc27abf8f84b9e6bde0cdd7a6b0eddfef11364fe147dc216b6d1d"
+source = "git+https://github.com/hyperware-ai/process_lib?rev=2453cc6#2453cc645de1fe999ab7e5a798d7931b3649aed1"
 dependencies = [
  "alloy",
  "alloy-primitives",

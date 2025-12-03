@@ -1929,10 +1929,10 @@ fn generate_websocket_handler(
                 hyperware_process_lib::hyperapp::maybe_save_state(&mut *state);
             }
         },
-        hyperware_process_lib::http::server::HttpServerRequest::WebSocketOpen { path, channel_id } => {
+        hyperware_process_lib::http::server::HttpServerRequest::WebSocketOpen { path, channel_id, source_socket_addr, forwarded_for } => {
             hyperware_process_lib::logging::debug!("WebSocket connection opened on path '{}' with channel {}", path, channel_id);
             match hyperware_process_lib::hyperapp::get_server() {
-                Some(server) => server.handle_websocket_open(&path, channel_id),
+                Some(server) => server.handle_websocket_open(&path, channel_id, source_socket_addr, forwarded_for),
                 None => hyperware_process_lib::logging::error!("Failed to get server instance for WebSocket open event")
             }
         },
