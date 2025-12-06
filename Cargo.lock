@@ -1731,7 +1731,7 @@ dependencies = [
 
 [[package]]
 name = "hyperapp_macro"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "hyperware_process_lib",
  "proc-macro2",
