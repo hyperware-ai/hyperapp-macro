@@ -980,7 +980,7 @@ fn generate_request_response_enums(
         return (quote! {}, quote! {});
     }
 
-    // HPMRequest enum variants - ONLY include handlers that have parameters
+    // HAMRequest enum variants - ONLY include handlers that have parameters
     // Parameter-less handlers are dispatched directly in Phase 1, not through enum deserialization
     let request_variants = function_metadata
         .iter()
@@ -990,7 +990,7 @@ fn generate_request_response_enums(
             generate_enum_variant(&variant_name, &func.params)
         });
 
-    // HPMResponse enum variants - include ALL handlers since they all need to return responses
+    // HAMResponse enum variants - include ALL handlers since they all need to return responses
     let response_variants = function_metadata.iter().map(|func| {
         let variant_name = format_ident!("{}", &func.variant_name);
 
@@ -1013,13 +1013,13 @@ fn generate_request_response_enums(
     (
         quote! {
             #[derive(Debug, serde::Serialize, serde::Deserialize)]
-            enum HPMRequest {
+            enum HAMRequest {
                 #(#request_variants),*
             }
         },
         quote! {
             #[derive(Debug, serde::Serialize, serde::Deserialize)]
-            enum HPMResponse {
+            enum HAMResponse {
                 #(#response_variants),*
             }
         },
@@ -1188,7 +1188,7 @@ fn generate_response_handling(
     match handler_type {
         HandlerType::Local | HandlerType::Remote => {
             quote! {
-                // Instead of wrapping in HPMResponse enum, directly serialize the result
+                // Instead of wrapping in HAMResponse enum, directly serialize the result
                 let resp = hyperware_process_lib::Response::new()
                     .body(serde_json::to_vec(&result).unwrap());
                 resp.send().unwrap();
@@ -1196,7 +1196,7 @@ fn generate_response_handling(
         }
         HandlerType::Eth => {
             quote! {
-                // Instead of wrapping in HPMResponse enum, directly serialize the result
+                // Instead of wrapping in HAMResponse enum, directly serialize the result
                 let resp = hyperware_process_lib::Response::new()
                     .body(serde_json::to_vec(&result).unwrap());
                 resp.send().unwrap();
@@ -1204,7 +1204,7 @@ fn generate_response_handling(
         }
         HandlerType::Http => {
             quote! {
-                // Instead of wrapping in HPMResponse enum, directly serialize the result
+                // Instead of wrapping in HAMResponse enum, directly serialize the result
                 let response_bytes = serde_json::to_vec(&result).unwrap();
 
                 // Get headers from the current HTTP context
@@ -1252,7 +1252,7 @@ fn generate_async_handler_arm(
     if func.params.is_empty() {
         // Updated pattern to match struct variant with no fields
         quote! {
-            HPMRequest::#variant_name{} => {
+            HAMRequest::#variant_name{} => {
                 // Create a raw pointer to state for use in the async block
                 let state_ptr: *mut #self_ty = state;
                 hyperware_process_lib::hyperapp::spawn(async move {
@@ -1265,7 +1265,7 @@ fn generate_async_handler_arm(
     } else if func.params.len() == 1 {
         // Async function with a single parameter
         quote! {
-            HPMRequest::#variant_name(param) => {
+            HAMRequest::#variant_name(param) => {
                 let param_captured = param;  // Capture param before moving into async block
                 // Create a raw pointer to state for use in the async block
                 let state_ptr: *mut #self_ty = state;
@@ -1288,7 +1288,7 @@ fn generate_async_handler_arm(
         let captured_names = (0..param_count).map(|i| format_ident!("param{}_captured", i));
 
         quote! {
-            HPMRequest::#variant_name(#(#param_names),*) => {
+            HAMRequest::#variant_name(#(#param_names),*) => {
                 // Capture all parameters before moving into async block
                 #(#capture_statements)*
                 // Create a raw pointer to state for use in the async block
@@ -1313,14 +1313,14 @@ fn generate_sync_handler_arm(
     if func.params.is_empty() {
         // Updated pattern to match struct variant with no fields
         quote! {
-            HPMRequest::#variant_name{} => {
+            HAMRequest::#variant_name{} => {
                 let result = unsafe { (*state).#fn_name() };
                 #response_handling
             }
         }
     } else if func.params.len() == 1 {
         quote! {
-            HPMRequest::#variant_name(param) => {
+            HAMRequest::#variant_name(param) => {
                 let result = unsafe { (*state).#fn_name(param) };
                 #response_handling
             }
@@ -1331,7 +1331,7 @@ fn generate_sync_handler_arm(
         let param_names2 = param_names.clone();
 
         quote! {
-            HPMRequest::#variant_name(#(#param_names),*) => {
+            HAMRequest::#variant_name(#(#param_names),*) => {
                 let result = unsafe { (*state).#fn_name(#(#param_names2),*) };
                 #response_handling
             }
@@ -1574,10 +1574,10 @@ fn generate_parameterized_handler_dispatch(
 
                 if let Some(ref blob) = blob_opt {
                     hyperware_process_lib::logging::debug!("Got blob with {} bytes: {}", blob.bytes.len(), String::from_utf8_lossy(&blob.bytes));
-                    match serde_json::from_slice::<HPMRequest>(&blob.bytes) {
+                    match serde_json::from_slice::<HAMRequest>(&blob.bytes) {
                         Ok(request) => {
                             match request {
-                                HPMRequest::#variant_name(..) => {
+                                HAMRequest::#variant_name(..) => {
                                     unsafe {
                                         #http_request_match_arms
                                         hyperware_process_lib::hyperapp::maybe_save_state(&mut *state);
@@ -1765,7 +1765,7 @@ fn generate_http_handler_dispatcher(
             hyperware_process_lib::logging::debug!("Request has body, using two-phase matching");
 
             if let Some(ref blob) = blob_opt {
-                match serde_json::from_slice::<HPMRequest>(&blob.bytes) {
+                match serde_json::from_slice::<HAMRequest>(&blob.bytes) {
                     Ok(request) => {
                         hyperware_process_lib::logging::debug!("Successfully parsed request body, dispatching to specific handler");
                         unsafe {
@@ -1959,7 +1959,7 @@ fn generate_local_message_handler(
         /// Handle local messages
         fn handle_local_message(state: *mut #self_ty, message: hyperware_process_lib::Message) {
             hyperware_process_lib::logging::debug!("Processing local message from: {:?}", message.source());
-            match serde_json::from_slice::<HPMRequest>(message.body()) {
+            match serde_json::from_slice::<HAMRequest>(message.body()) {
                 Ok(request) => {
                     unsafe {
                         #match_arms
@@ -1969,7 +1969,7 @@ fn generate_local_message_handler(
                 Err(e) => {
                     let raw_body = String::from_utf8_lossy(message.body());
                     hyperware_process_lib::logging::error!(
-                        "Failed to deserialize local request into HPMRequest enum.\n\
+                        "Failed to deserialize local request into HAMRequest enum.\n\
                         Error: {}\n\
                         Source: {:?}\n\
                         Body: {}\n\
@@ -1993,7 +1993,7 @@ fn generate_remote_message_handler(
         /// Handle remote messages
         fn handle_remote_message(state: *mut #self_ty, message: hyperware_process_lib::Message) {
             hyperware_process_lib::logging::debug!("Processing remote message from: {:?}", message.source());
-            match serde_json::from_slice::<HPMRequest>(message.body()) {
+            match serde_json::from_slice::<HAMRequest>(message.body()) {
                 Ok(request) => {
                     unsafe {
                         #match_arms
@@ -2003,7 +2003,7 @@ fn generate_remote_message_handler(
                 Err(e) => {
                     let raw_body = String::from_utf8_lossy(message.body());
                     hyperware_process_lib::logging::error!(
-                        "Failed to deserialize remote request into HPMRequest enum.\n\
+                        "Failed to deserialize remote request into HAMRequest enum.\n\
                         Error: {}\n\
                         Source: {:?}\n\
                         Body: {}\n\
@@ -2080,7 +2080,7 @@ fn generate_eth_message_handler(
         fn handle_eth_message(state: *mut #self_ty, message: hyperware_process_lib::Message) {
             hyperware_process_lib::logging::debug!("Processing ETH message from: {:?}", message.source());
 
-            // ETH messages contain EthSubResult directly, not wrapped in HPMRequest
+            // ETH messages contain EthSubResult directly, not wrapped in HAMRequest
             match serde_json::from_slice::<hyperware_process_lib::eth::EthSubResult>(message.body()) {
                 Ok(eth_sub_result) => {
                     hyperware_process_lib::logging::debug!("Successfully parsed EthSubResult, calling ETH handler");
@@ -2365,14 +2365,14 @@ pub fn hyperapp(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Filter functions by handler type
     let handlers = HandlerGroups::from_function_metadata(&function_metadata);
 
-    // HTTP handlers with parameters will be part of the HPMRequest enum and dispatched via body deserialization.
+    // HTTP handlers with parameters will be part of the HAMRequest enum and dispatched via body deserialization.
     let http_handlers_with_params: Vec<_> = handlers.http.iter().cloned().collect();
 
-    // Collect all function metadata that will be represented in the HPMRequest enum.
+    // Collect all function metadata that will be represented in the HAMRequest enum.
     // This includes all local and remote handlers, plus HTTP handlers that have parameters.
     let metadata_for_enum: Vec<_> = function_metadata.iter().cloned().collect();
 
-    // Generate HPMRequest and HPMResponse enums from the filtered list of functions
+    // Generate HAMRequest and HAMResponse enums from the filtered list of functions
     let (request_enum, response_enum) = generate_request_response_enums(&metadata_for_enum);
 
     // Generate handler match arms
